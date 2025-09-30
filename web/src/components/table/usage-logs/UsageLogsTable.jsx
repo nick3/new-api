@@ -46,6 +46,7 @@ const LogsTable = (logsData) => {
     billingDisplayMode,
     t,
     COLUMN_KEYS,
+    openDetailDrawer,
   } = logsData;
 
   // Get all columns
@@ -58,6 +59,7 @@ const LogsTable = (logsData) => {
       openChannelAffinityUsageCacheModal,
       isAdminUser,
       billingDisplayMode,
+      openDetailDrawer,
     });
   }, [
     t,
@@ -67,6 +69,7 @@ const LogsTable = (logsData) => {
     openChannelAffinityUsageCacheModal,
     isAdminUser,
     billingDisplayMode,
+    openDetailDrawer,
   ]);
 
   // Filter columns based on visibility settings

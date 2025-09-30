@@ -25,6 +25,7 @@ import {
   Tooltip,
   Popover,
   Typography,
+  Button,
 } from '@douyinfe/semi-ui';
 import {
   renderGroup,
@@ -34,7 +35,7 @@ import {
   renderModelTag,
   renderModelPriceSimple,
 } from '../../../helpers';
-import { IconHelpCircle } from '@douyinfe/semi-icons';
+import { IconHelpCircle, IconEyeOpened } from '@douyinfe/semi-icons';
 import { Route, Sparkles } from 'lucide-react';
 
 const colors = [
@@ -467,6 +468,7 @@ export const getLogsColumns = ({
   openChannelAffinityUsageCacheModal,
   isAdminUser,
   billingDisplayMode = 'price',
+  openDetailDrawer,
 }) => {
   return [
     {
@@ -911,6 +913,27 @@ export const getLogsColumns = ({
 
         return renderCompactDetailSummary(detailSummary.segments);
       },
+    },
+    isAdminUser && {
+      key: COLUMN_KEYS.ACTION,
+      title: t('操作'),
+      dataIndex: 'actions',
+      fixed: 'right',
+      width: 72,
+      render: (text, record) => (
+        <Tooltip content={t('查看详情')}>
+          <Button
+            theme='borderless'
+            type='tertiary'
+            icon={<IconEyeOpened />}
+            disabled={!record.detail}
+            onClick={(event) => {
+              event.stopPropagation();
+              openDetailDrawer(record);
+            }}
+          />
+        </Tooltip>
+      ),
     },
   ];
 };
