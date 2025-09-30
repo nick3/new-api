@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/constant"
 	"one-api/logger"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,7 @@ func IOCopyBytesGracefully(c *gin.Context, src *http.Response, data []byte) {
 	}
 
 	body := io.NopCloser(bytes.NewBuffer(data))
+	common.CapturePayloadForLog(c, constant.ContextKeyLoggedResponseBody, data)
 
 	// We shouldn't set the header before we parse the response body, because the parse part may fail.
 	// And then we will have to send an error response, but in this case, the header has already been set.

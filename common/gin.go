@@ -14,17 +14,20 @@ import (
 const KeyRequestBody = "key_request_body"
 
 func GetRequestBody(c *gin.Context) ([]byte, error) {
-	requestBody, _ := c.Get(KeyRequestBody)
-	if requestBody != nil {
-		return requestBody.([]byte), nil
+	if cached, ok := c.Get(KeyRequestBody); ok {
+		if data, ok := cached.([]byte); ok {
+			return data, nil
+		}
 	}
-	requestBody, err := io.ReadAll(c.Request.Body)
+	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		return nil, err
 	}
 	_ = c.Request.Body.Close()
-	c.Set(KeyRequestBody, requestBody)
-	return requestBody.([]byte), nil
+	CapturePayloadForLog(c, constant.ContextKeyLoggedRequestBody, raw)
+	c.Set(KeyRequestBody, raw)
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(raw))
+	return raw, nil
 }
 
 func UnmarshalBodyReusable(c *gin.Context, v any) error {

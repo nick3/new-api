@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"one-api/common"
+	"one-api/constant"
 	"one-api/dto"
 	"one-api/logger"
 	"one-api/types"
@@ -67,6 +68,7 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 func StringData(c *gin.Context, str string) error {
 	//str = strings.TrimPrefix(str, "data: ")
 	//str = strings.TrimSuffix(str, "\r")
+	common.AppendPayloadChunkForLog(c, constant.ContextKeyLoggedResponseBody, str)
 	c.Render(-1, common.CustomEvent{Data: "data: " + str})
 	_ = FlushWriter(c)
 	return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"one-api/common"
+	"one-api/constant"
 	"one-api/logger"
 	"one-api/types"
 	"os"
@@ -17,25 +18,37 @@ import (
 )
 
 type Log struct {
-	Id               int    `json:"id" gorm:"index:idx_created_at_id,priority:1"`
-	UserId           int    `json:"user_id" gorm:"index"`
-	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
-	Type             int    `json:"type" gorm:"index:idx_created_at_type"`
-	Content          string `json:"content"`
-	Username         string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
-	TokenName        string `json:"token_name" gorm:"index;default:''"`
-	ModelName        string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
-	Quota            int    `json:"quota" gorm:"default:0"`
-	PromptTokens     int    `json:"prompt_tokens" gorm:"default:0"`
-	CompletionTokens int    `json:"completion_tokens" gorm:"default:0"`
-	UseTime          int    `json:"use_time" gorm:"default:0"`
-	IsStream         bool   `json:"is_stream"`
-	ChannelId        int    `json:"channel" gorm:"index"`
-	ChannelName      string `json:"channel_name" gorm:"->"`
-	TokenId          int    `json:"token_id" gorm:"default:0;index"`
-	Group            string `json:"group" gorm:"index"`
-	Ip               string `json:"ip" gorm:"index;default:''"`
-	Other            string `json:"other"`
+	Id               int        `json:"id" gorm:"index:idx_created_at_id,priority:1"`
+	UserId           int        `json:"user_id" gorm:"index"`
+	CreatedAt        int64      `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
+	Type             int        `json:"type" gorm:"index:idx_created_at_type"`
+	Content          string     `json:"content"`
+	Username         string     `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
+	TokenName        string     `json:"token_name" gorm:"index;default:''"`
+	ModelName        string     `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	Quota            int        `json:"quota" gorm:"default:0"`
+	PromptTokens     int        `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens int        `json:"completion_tokens" gorm:"default:0"`
+	UseTime          int        `json:"use_time" gorm:"default:0"`
+	IsStream         bool       `json:"is_stream"`
+	ChannelId        int        `json:"channel" gorm:"index"`
+	ChannelName      string     `json:"channel_name" gorm:"->"`
+	TokenId          int        `json:"token_id" gorm:"default:0;index"`
+	Group            string     `json:"group" gorm:"index"`
+	Ip               string     `json:"ip" gorm:"index;default:''"`
+	Other            string     `json:"other"`
+	Detail           *LogDetail `json:"detail,omitempty" gorm:"-"`
+}
+
+type LogDetail struct {
+	LogId        int    `json:"log_id" gorm:"primaryKey"`
+	RequestBody  string `json:"request_body" gorm:"type:longtext"`
+	ResponseBody string `json:"response_body" gorm:"type:longtext"`
+	CreatedAt    int64  `json:"created_at" gorm:"autoCreateTime"`
+}
+
+func (LogDetail) TableName() string {
+	return "log_details"
 }
 
 const (
@@ -71,6 +84,7 @@ func GetLogByKey(key string) (logs []*Log, err error) {
 	} else {
 		err = LOG_DB.Joins("left join tokens on tokens.id = logs.token_id").Where("tokens.key = ?", strings.TrimPrefix(key, "sk-")).Find(&logs).Error
 	}
+	attachLogDetails(logs)
 	formatUserLogs(logs)
 	return logs, err
 }
@@ -133,21 +147,25 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	reqPreview, respPreview := resolveLogPayloads(c, "", "")
+	persistLogDetail(c, log.Id, reqPreview, respPreview)
 }
 
 type RecordConsumeLogParams struct {
-	ChannelId        int                    `json:"channel_id"`
-	PromptTokens     int                    `json:"prompt_tokens"`
-	CompletionTokens int                    `json:"completion_tokens"`
-	ModelName        string                 `json:"model_name"`
-	TokenName        string                 `json:"token_name"`
-	Quota            int                    `json:"quota"`
-	Content          string                 `json:"content"`
-	TokenId          int                    `json:"token_id"`
-	UseTimeSeconds   int                    `json:"use_time_seconds"`
-	IsStream         bool                   `json:"is_stream"`
-	Group            string                 `json:"group"`
-	Other            map[string]interface{} `json:"other"`
+	ChannelId           int                    `json:"channel_id"`
+	PromptTokens        int                    `json:"prompt_tokens"`
+	CompletionTokens    int                    `json:"completion_tokens"`
+	ModelName           string                 `json:"model_name"`
+	TokenName           string                 `json:"token_name"`
+	Quota               int                    `json:"quota"`
+	Content             string                 `json:"content"`
+	TokenId             int                    `json:"token_id"`
+	UseTimeSeconds      int                    `json:"use_time_seconds"`
+	IsStream            bool                   `json:"is_stream"`
+	Group               string                 `json:"group"`
+	Other               map[string]interface{} `json:"other"`
+	RequestBodyPreview  string                 `json:"-" gorm:"-"`
+	ResponseBodyPreview string                 `json:"-" gorm:"-"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -192,10 +210,77 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	requestPreview, responsePreview := resolveLogPayloads(c, params.RequestBodyPreview, params.ResponseBodyPreview)
+	persistLogDetail(c, log.Id, requestPreview, responsePreview)
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
+	}
+}
+
+func attachLogDetails(logs []*Log) {
+	if len(logs) == 0 {
+		return
+	}
+	ids := make([]int, 0, len(logs))
+	for _, log := range logs {
+		if log != nil {
+			ids = append(ids, log.Id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	detailsMap, err := GetLogDetailsByIDs(ids)
+	if err != nil {
+		// silently ignore; detail retrieval failure should not break log listing
+		logger.LogError(context.Background(), "failed to load log details: "+err.Error())
+		return
+	}
+	for _, log := range logs {
+		if log == nil {
+			continue
+		}
+		if detail, ok := detailsMap[log.Id]; ok {
+			log.Detail = detail
+		}
+	}
+}
+
+func resolveLogPayloads(c *gin.Context, requestPreview string, responsePreview string) (string, string) {
+	request := requestPreview
+	response := responsePreview
+	if c == nil {
+		return request, response
+	}
+	if request == "" {
+		request = common.GetContextKeyString(c, constant.ContextKeyLoggedRequestBody)
+	}
+	if response == "" {
+		response = common.GetContextKeyString(c, constant.ContextKeyLoggedResponseBody)
+	}
+	return request, response
+}
+
+func persistLogDetail(c *gin.Context, logId int, request string, response string) {
+	if logId == 0 {
+		return
+	}
+	if request == "" && response == "" {
+		return
+	}
+	detail := &LogDetail{
+		LogId:        logId,
+		RequestBody:  request,
+		ResponseBody: response,
+	}
+	if err := LOG_DB.Create(detail).Error; err != nil {
+		ctx := context.Background()
+		if c != nil {
+			ctx = c
+		}
+		logger.LogError(ctx, "failed to record log detail: "+err.Error())
 	}
 }
 
@@ -236,6 +321,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
+	attachLogDetails(logs)
 
 	channelIds := types.NewSet[int]()
 	for _, log := range logs {
@@ -296,6 +382,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		return nil, 0, err
 	}
 
+	attachLogDetails(logs)
 	formatUserLogs(logs)
 	return logs, total, err
 }
@@ -309,6 +396,21 @@ func SearchUserLogs(userId int, keyword string) (logs []*Log, err error) {
 	err = LOG_DB.Where("user_id = ? and type = ?", userId, keyword).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs)
 	return logs, err
+}
+
+func GetLogDetailsByIDs(ids []int) (map[int]*LogDetail, error) {
+	if len(ids) == 0 {
+		return map[int]*LogDetail{}, nil
+	}
+	var details []*LogDetail
+	if err := LOG_DB.Where("log_id IN ?", ids).Find(&details).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[int]*LogDetail, len(details))
+	for _, detail := range details {
+		result[detail.LogId] = detail
+	}
+	return result, nil
 }
 
 type Stat struct {

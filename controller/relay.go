@@ -65,6 +65,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	requestId := c.GetString(common.RequestIdKey)
 	group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	if relayFormat == types.RelayFormatOpenAIRealtime {
+		common.CapturePayloadStringForLog(c, constant.ContextKeyLoggedRequestBody, "[websocket stream request]")
+		common.CapturePayloadStringForLog(c, constant.ContextKeyLoggedResponseBody, "[websocket stream response]")
+	}
 
 	var (
 		newAPIError *types.NewAPIError
@@ -88,14 +92,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
 			case types.RelayFormatClaude:
-				c.JSON(newAPIError.StatusCode, gin.H{
+				payload := gin.H{
 					"type":  "error",
 					"error": newAPIError.ToClaudeError(),
-				})
+				}
+				common.CapturePayloadStringForLog(c, constant.ContextKeyLoggedResponseBody, common.GetJsonString(payload))
+				c.JSON(newAPIError.StatusCode, payload)
 			default:
-				c.JSON(newAPIError.StatusCode, gin.H{
+				payload := gin.H{
 					"error": newAPIError.ToOpenAIError(),
-				})
+				}
+				common.CapturePayloadStringForLog(c, constant.ContextKeyLoggedResponseBody, common.GetJsonString(payload))
+				c.JSON(newAPIError.StatusCode, payload)
 			}
 		}
 	}()
