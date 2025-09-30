@@ -44,7 +44,7 @@ type LogDetail struct {
 	LogId        int    `json:"log_id" gorm:"primaryKey"`
 	RequestBody  string `json:"request_body" gorm:"type:longtext"`
 	ResponseBody string `json:"response_body" gorm:"type:longtext"`
-	CreatedAt    int64  `json:"created_at" gorm:"autoCreateTime"`
+	CreatedAt    int64  `json:"created_at" gorm:"bigint;index;autoCreateTime"`
 }
 
 func (LogDetail) TableName() string {
@@ -255,10 +255,20 @@ func resolveLogPayloads(c *gin.Context, requestPreview string, responsePreview s
 		return request, response
 	}
 	if request == "" {
-		request = common.GetContextKeyString(c, constant.ContextKeyLoggedRequestBody)
+		full := common.GetFullPayloadString(c, constant.ContextKeyLoggedRequestBodyFull)
+		if full != "" {
+			request = full
+		} else {
+			request = common.GetContextKeyString(c, constant.ContextKeyLoggedRequestBody)
+		}
 	}
 	if response == "" {
-		response = common.GetContextKeyString(c, constant.ContextKeyLoggedResponseBody)
+		full := common.GetFullPayloadString(c, constant.ContextKeyLoggedResponseBodyFull)
+		if full != "" {
+			response = full
+		} else {
+			response = common.GetContextKeyString(c, constant.ContextKeyLoggedResponseBody)
+		}
 	}
 	return request, response
 }

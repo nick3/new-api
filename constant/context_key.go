@@ -49,6 +49,8 @@ const (
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
 
 	/* logging payload previews */
-	ContextKeyLoggedRequestBody  ContextKey = "logged_request_body"
-	ContextKeyLoggedResponseBody ContextKey = "logged_response_body"
+	ContextKeyLoggedRequestBody      ContextKey = "logged_request_body"
+	ContextKeyLoggedResponseBody     ContextKey = "logged_response_body"
+	ContextKeyLoggedRequestBodyFull  ContextKey = "logged_request_body_full"
+	ContextKeyLoggedResponseBodyFull ContextKey = "logged_response_body_full"
 )
