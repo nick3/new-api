@@ -209,7 +209,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			data = strings.TrimSuffix(data, "\r")
 			if !strings.HasPrefix(data, "[DONE]") {
 				info.SetFirstResponseTime()
-				common.AppendPayloadChunkForLog(c, constant.ContextKeyLoggedResponseBody, data)
 
 				// 使用超时机制防止写操作阻塞
 				done := make(chan bool, 1)
