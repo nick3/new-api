@@ -30,6 +30,7 @@ import {
   Spin,
   Card,
   Radio,
+  Input,
   Select,
 } from '@douyinfe/semi-ui';
 const { Text } = Typography;
@@ -42,6 +43,8 @@ import {
 } from '../../helpers';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
+
+const retentionPresets = ['1', '3', '7', '30', '90'];
 
 const SystemSetting = () => {
   const { t } = useTranslation();
@@ -106,6 +109,7 @@ const SystemSetting = () => {
     'fetch_setting.ip_list': [],
     'fetch_setting.allowed_ports': [],
     'fetch_setting.apply_ip_filter_for_domain': false,
+    DetailedLogRetentionDays: 30,
   });
 
   const [originInputs, setOriginInputs] = useState({});
@@ -123,6 +127,8 @@ const SystemSetting = () => {
   const [ipList, setIpList] = useState([]);
   const [allowedPorts, setAllowedPorts] = useState([]);
   const [passkeyOrigins, setPasskeyOrigins] = useState([]);
+  const [logRetentionSelection, setLogRetentionSelection] = useState('30');
+  const [logRetentionCustom, setLogRetentionCustom] = useState('');
 
   const getOptions = async () => {
     setLoading(true);
@@ -208,6 +214,11 @@ const SystemSetting = () => {
           case 'MinTopUp':
             item.value = parseFloat(item.value);
             break;
+          case 'DetailedLogRetentionDays': {
+            const parsedDays = parseInt(item.value, 10);
+            item.value = Number.isNaN(parsedDays) ? 30 : parsedDays;
+            break;
+          }
           default:
             break;
         }
@@ -215,6 +226,24 @@ const SystemSetting = () => {
       });
       setInputs(newInputs);
       setOriginInputs(newInputs);
+      const retentionValue = newInputs.DetailedLogRetentionDays;
+      const normalizedRetention =
+        typeof retentionValue === 'number'
+          ? retentionValue
+          : parseInt(retentionValue, 10);
+      if (!Number.isNaN(normalizedRetention)) {
+        const retentionStr = `${normalizedRetention}`;
+        if (retentionPresets.includes(retentionStr)) {
+          setLogRetentionSelection(retentionStr);
+          setLogRetentionCustom('');
+        } else {
+          setLogRetentionSelection('custom');
+          setLogRetentionCustom(retentionStr);
+        }
+      } else {
+        setLogRetentionSelection('30');
+        setLogRetentionCustom('');
+      }
       // 同步模式布尔到本地状态
       if (typeof newInputs['fetch_setting.domain_filter_mode'] !== 'undefined') {
         setDomainFilterMode(!!newInputs['fetch_setting.domain_filter_mode']);
@@ -396,6 +425,63 @@ const SystemSetting = () => {
     if (options.length > 0) {
       await updateOptions(options);
     }
+  };
+
+  const handleRetentionRadioChange = (val) => {
+    const selected = val && val.target ? val.target.value : val;
+    const resolved = `${selected}`;
+    setLogRetentionSelection(resolved);
+    if (resolved !== 'custom') {
+      setLogRetentionCustom('');
+      const numeric = parseInt(resolved, 10);
+      if (!Number.isNaN(numeric)) {
+        setInputs((prev) => ({
+          ...prev,
+          DetailedLogRetentionDays: numeric,
+        }));
+      }
+    }
+  };
+
+  const handleRetentionCustomChange = (value) => {
+    const nextValue = value && value.target ? value.target.value : value;
+    setLogRetentionCustom(nextValue);
+    const numeric = parseInt(nextValue, 10);
+    if (!Number.isNaN(numeric) && numeric >= 0) {
+      setInputs((prev) => ({
+        ...prev,
+        DetailedLogRetentionDays: numeric,
+      }));
+    }
+  };
+
+  const submitDetailedLogRetention = async () => {
+    let daysValue;
+    if (logRetentionSelection === 'custom') {
+      const trimmed = (logRetentionCustom || '').trim();
+      const parsed = parseInt(trimmed, 10);
+      if (trimmed === '' || Number.isNaN(parsed) || parsed < 0) {
+        showError(t('保留时间必须是非负整数'));
+        return;
+      }
+      daysValue = parsed;
+    } else {
+      const parsed = parseInt(logRetentionSelection, 10);
+      if (Number.isNaN(parsed) || parsed < 0) {
+        showError(t('保留时间必须是非负整数'));
+        return;
+      }
+      daysValue = parsed;
+    }
+
+    await updateOptions([
+      { key: 'DetailedLogRetentionDays', value: daysValue },
+    ]);
+    const nextSelection = retentionPresets.includes(`${daysValue}`)
+      ? `${daysValue}`
+      : 'custom';
+    setLogRetentionSelection(nextSelection);
+    setLogRetentionCustom(nextSelection === 'custom' ? `${daysValue}` : '');
   };
 
   const handleAddEmail = () => {
@@ -917,6 +1003,47 @@ const SystemSetting = () => {
 
                   <Button onClick={submitSSRF} style={{ marginTop: 16 }}>
                     {t('更新SSRF防护设置')}
+                  </Button>
+                </Form.Section>
+              </Card>
+
+              <Card>
+                <Form.Section text={t('使用日志保留设置')}>
+                  <Row>
+                  <Text
+                    type='secondary'
+                    style={{ display: 'block', marginBottom: 12 }}
+                  >
+                    {t('使用日志保留设置说明')}
+                  </Text>
+                  <Radio.Group
+                    type='button'
+                    value={logRetentionSelection}
+                    onChange={handleRetentionRadioChange}
+                    style={{ marginBottom: 12, flexWrap: 'wrap' }}
+                  >
+                    {retentionPresets.map((preset) => (
+                      <Radio key={preset} value={preset}>
+                        {t('{{days}}天', { days: preset })}
+                      </Radio>
+                    ))}
+                    <Radio value='custom'>{t('自定义')}</Radio>
+                  </Radio.Group>
+                  {logRetentionSelection === 'custom' ? (
+                    <div style={{ marginBottom: 12 }}>
+                      <Input
+                        type='number'
+                        min={0}
+                        value={logRetentionCustom}
+                        placeholder={t('请输入自定义保留天数')}
+                        onChange={handleRetentionCustomChange}
+                        style={{ maxWidth: 200 }}
+                      />
+                    </div>
+                  ) : null}
+                  </Row>
+                  <Button onClick={submitDetailedLogRetention}>
+                    {t('保存日志保留设置')}
                   </Button>
                 </Form.Section>
               </Card>

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"one-api/common"
 	"one-api/setting"
 	"one-api/setting/config"
@@ -45,6 +46,7 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
+	common.OptionMap["DetailedLogRetentionDays"] = strconv.Itoa(common.DetailedLogRetentionDays)
 	common.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(common.DisplayInCurrencyEnabled)
 	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)
@@ -333,6 +335,19 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.StripeMinTopUp, _ = strconv.Atoi(value)
 	case "StripePromotionCodesEnabled":
 		setting.StripePromotionCodesEnabled = value == "true"
+	case "DetailedLogRetentionDays":
+		var convErr error
+		days := common.DetailedLogRetentionDays
+		if value != "" {
+			days, convErr = strconv.Atoi(value)
+		}
+		if convErr != nil {
+			return fmt.Errorf("invalid DetailedLogRetentionDays: %w", convErr)
+		}
+		if days < 0 {
+			days = 0
+		}
+		common.DetailedLogRetentionDays = days
 	case "TopupGroupRatio":
 		err = common.UpdateTopupGroupRatioByJSONString(value)
 	case "GitHubClientId":
