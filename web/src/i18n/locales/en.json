@@ -2190,6 +2190,12 @@
   "留空将自动使用服务器地址，多个 Origin 用于支持多域名部署": "Leave blank to auto-use server address, multiple Origins for multi-domain deployment",
   "输入 Origin 后回车，如：https://example.com": "Enter Origin and press Enter, e.g.: https://example.com",
   "保存 Passkey 设置": "Save Passkey Settings",
+  "使用日志保留设置": "Detailed Usage Log Retention",
+  "使用日志保留设置说明": "Define how long request and response payloads remain before automatic cleanup.",
+  "{{days}}天": "{{days}} day(s)",
+  "请输入自定义保留天数": "Enter custom retention days",
+  "保存日志保留设置": "Save Retention Settings",
+  "保留时间必须是非负整数": "Retention must be a non-negative integer",
   "黑名单": "Blacklist",
   "common": {
     "changeLanguage": "Change Language"

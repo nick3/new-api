@@ -255,10 +255,20 @@ func resolveLogPayloads(c *gin.Context, requestPreview string, responsePreview s
 		return request, response
 	}
 	if request == "" {
-		request = common.GetContextKeyString(c, constant.ContextKeyLoggedRequestBody)
+		full := common.GetFullPayloadString(c, constant.ContextKeyLoggedRequestBodyFull)
+		if full != "" {
+			request = full
+		} else {
+			request = common.GetContextKeyString(c, constant.ContextKeyLoggedRequestBody)
+		}
 	}
 	if response == "" {
-		response = common.GetContextKeyString(c, constant.ContextKeyLoggedResponseBody)
+		full := common.GetFullPayloadString(c, constant.ContextKeyLoggedResponseBodyFull)
+		if full != "" {
+			response = full
+		} else {
+			response = common.GetContextKeyString(c, constant.ContextKeyLoggedResponseBody)
+		}
 	}
 	return request, response
 }

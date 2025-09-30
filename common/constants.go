@@ -71,6 +71,7 @@ var DebugEnabled bool
 var MemoryCacheEnabled bool
 
 var LogConsumeEnabled = true
+var DetailedLogRetentionDays = 30
 
 var SMTPServer = ""
 var SMTPPort = 587
