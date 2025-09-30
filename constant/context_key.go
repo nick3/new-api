@@ -59,6 +59,8 @@ const (
 	/* logging payload previews */
 	ContextKeyLoggedRequestBody  ContextKey = "logged_request_body"
 	ContextKeyLoggedResponseBody ContextKey = "logged_response_body"
+	ContextKeyLoggedRequestBodyFull  ContextKey = "logged_request_body_full"
+	ContextKeyLoggedResponseBodyFull ContextKey = "logged_response_body_full"
 
 	// ContextKeyFileSourcesToCleanup stores file sources that need cleanup when request ends
 	ContextKeyFileSourcesToCleanup ContextKey = "file_sources_to_cleanup"

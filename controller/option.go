@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -188,6 +189,25 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "DetailedLogRetentionDays":
+		daysString := fmt.Sprintf("%v", option.Value)
+		parsedFloat, parseErr := strconv.ParseFloat(daysString, 64)
+		if parseErr != nil || parsedFloat < 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "详细使用日志保留时间必须是非负整数天数",
+			})
+			return
+		}
+		if parsedFloat != float64(int(parsedFloat)) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "详细使用日志保留时间必须是非负整数天数",
+			})
+			return
+		}
+		days := int(parsedFloat)
+		option.Value = strconv.Itoa(days)
 	case "GroupRatio":
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
 		if err != nil {

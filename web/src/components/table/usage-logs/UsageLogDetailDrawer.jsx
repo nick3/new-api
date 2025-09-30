@@ -44,6 +44,22 @@ const safeParseJson = (raw) => {
   }
 };
 
+const decodeUnicodeEscapes = (raw) => {
+  if (typeof raw !== 'string') {
+    return raw;
+  }
+  if (!/(\\u[0-9a-fA-F]{4})|(\\n)|(\\r)|(\\t)/.test(raw)) {
+    return raw;
+  }
+  let output = raw.replace(/\\u([0-9a-fA-F]{4})/g, (_, code) =>
+    String.fromCharCode(parseInt(code, 16)),
+  );
+  output = output.replace(/\\n/g, '\n');
+  output = output.replace(/\\r/g, '\r');
+  output = output.replace(/\\t/g, '\t');
+  return output;
+};
+
 const formatJsonString = (raw) => {
   if (!raw || typeof raw !== 'string') {
     return '';
@@ -115,10 +131,10 @@ const normaliseContent = (content) => {
     return '';
   }
   if (typeof content === 'string') {
-    return content;
+    return decodeUnicodeEscapes(content);
   }
   if (Array.isArray(content)) {
-    return content
+    const combined = content
       .map((item) => {
         if (typeof item === 'string') {
           return item;
@@ -132,20 +148,21 @@ const normaliseContent = (content) => {
         return JSON.stringify(item);
       })
       .join('');
+    return decodeUnicodeEscapes(combined);
   }
   if (typeof content === 'object') {
     if (content.text) {
-      return content.text;
+      return decodeUnicodeEscapes(content.text);
     }
     if (content.value) {
-      return content.value;
+      return decodeUnicodeEscapes(content.value);
     }
     if (content.content) {
       return normaliseContent(content.content);
     }
-    return JSON.stringify(content);
+    return decodeUnicodeEscapes(JSON.stringify(content));
   }
-  return String(content);
+  return decodeUnicodeEscapes(String(content));
 };
 
 const collectRequestMessages = (requestObject) => {
@@ -246,7 +263,7 @@ const buildRequestParams = (requestObject, t) => {
   const params = [];
   const pushIfPresent = (label, value) => {
     if (value !== undefined && value !== null && value !== '') {
-      params.push({ key: label, value: String(value) });
+      params.push({ key: label, value: decodeUnicodeEscapes(String(value)) });
     }
   };
 

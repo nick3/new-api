@@ -3309,6 +3309,12 @@
     "输入价格：{{symbol}}{{price}} / 1M tokens": "Input Price: {{symbol}}{{price}} / 1M tokens",
     "输出价格 {{symbol}}{{price}} / 1M tokens": "Output Price {{symbol}}{{price}} / 1M tokens",
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Output Price: {{symbol}}{{price}} / 1M tokens",
-    "输出价格：{{symbol}}{{total}} / 1M tokens": "Output Price: {{symbol}}{{total}} / 1M tokens"
+    "输出价格：{{symbol}}{{total}} / 1M tokens": "Output Price: {{symbol}}{{total}} / 1M tokens",
+    "使用日志保留设置": "Detailed Usage Log Retention",
+    "使用日志保留设置说明": "Define how long request and response payloads remain before automatic cleanup.",
+    "{{days}}天": "{{days}} day(s)",
+    "请输入自定义保留天数": "Enter custom retention days",
+    "保存日志保留设置": "Save Retention Settings",
+    "保留时间必须是非负整数": "Retention must be a non-negative integer"
   }
 }

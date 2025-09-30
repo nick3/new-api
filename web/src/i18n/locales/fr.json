@@ -3272,6 +3272,12 @@
     "输入价格：{{symbol}}{{price}} / 1M tokens": "Prix d'entrée : {{symbol}}{{price}} / 1M tokens",
     "输出价格 {{symbol}}{{price}} / 1M tokens": "Prix de sortie {{symbol}}{{price}} / 1M tokens",
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Prix de sortie : {{symbol}}{{price}} / 1M tokens",
-    "输出价格：{{symbol}}{{total}} / 1M tokens": "Prix de sortie : {{symbol}}{{total}} / 1M tokens"
+    "输出价格：{{symbol}}{{total}} / 1M tokens": "Prix de sortie : {{symbol}}{{total}} / 1M tokens",
+    "使用日志保留设置": "Rétention des journaux détaillés",
+    "使用日志保留设置说明": "Définissez la durée de conservation des charges des requêtes et réponses avant nettoyage automatique.",
+    "{{days}}天": "{{days}} jour(s)",
+    "请输入自定义保留天数": "Saisissez un nombre de jours personnalisé",
+    "保存日志保留设置": "Enregistrer la rétention des journaux",
+    "保留时间必须是非负整数": "La durée de rétention doit être un entier positif ou nul"
   }
 }
