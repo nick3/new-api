@@ -44,6 +44,7 @@ const LogsTable = (logsData) => {
     isAdminUser,
     t,
     COLUMN_KEYS,
+    openDetailDrawer,
   } = logsData;
 
   // Get all columns
@@ -54,6 +55,7 @@ const LogsTable = (logsData) => {
       copyText,
       showUserInfoFunc,
       isAdminUser,
+      openDetailDrawer,
     });
   }, [t, COLUMN_KEYS, copyText, showUserInfoFunc, isAdminUser]);
 

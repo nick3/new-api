@@ -25,6 +25,7 @@ import {
   Tooltip,
   Popover,
   Typography,
+  Button,
 } from '@douyinfe/semi-ui';
 import {
   timestamp2string,
@@ -40,7 +41,7 @@ import {
   renderClaudeModelPrice,
   renderModelPrice,
 } from '../../../helpers';
-import { IconHelpCircle } from '@douyinfe/semi-icons';
+import { IconHelpCircle, IconEyeOpened } from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
 
 const colors = [
@@ -241,6 +242,7 @@ export const getLogsColumns = ({
   copyText,
   showUserInfoFunc,
   isAdminUser,
+  openDetailDrawer,
 }) => {
   return [
     {
@@ -522,7 +524,6 @@ export const getLogsColumns = ({
       key: COLUMN_KEYS.DETAILS,
       title: t('详情'),
       dataIndex: 'content',
-      fixed: 'right',
       render: (text, record, index) => {
         let other = getLogOther(record.other);
         if (other == null || record.type !== 2) {
@@ -581,6 +582,27 @@ export const getLogsColumns = ({
           </Typography.Paragraph>
         );
       },
+    },
+    isAdminUser && {
+      key: COLUMN_KEYS.ACTION,
+      title: t('操作'),
+      dataIndex: 'actions',
+      fixed: 'right',
+      width: 72,
+      render: (text, record) => (
+        <Tooltip content={t('查看详情')}>
+          <Button
+            theme='borderless'
+            type='tertiary'
+            icon={<IconEyeOpened />}
+            disabled={!record.detail}
+            onClick={(event) => {
+              event.stopPropagation();
+              openDetailDrawer(record);
+            }}
+          />
+        </Tooltip>
+      ),
     },
   ];
 };

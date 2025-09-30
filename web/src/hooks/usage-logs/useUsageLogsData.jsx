@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@douyinfe/semi-ui';
 import {
@@ -40,179 +40,6 @@ import {
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 
-const renderPreBlock = (content) => {
-  if (!content) {
-    return null;
-  }
-  return (
-    <pre className='whitespace-pre-wrap break-all font-mono text-xs leading-5'>
-      {content}
-    </pre>
-  );
-};
-
-const tryParseJSON = (raw) => {
-  if (!raw || typeof raw !== 'string') {
-    return null;
-  }
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-  try {
-    return JSON.parse(trimmed);
-  } catch (error) {
-    return null;
-  }
-};
-
-const formatJSON = (payload) => {
-  if (!payload) {
-    return '';
-  }
-  if (typeof payload === 'object') {
-    try {
-      return JSON.stringify(payload, null, 2);
-    } catch (error) {
-      return '';
-    }
-  }
-  if (typeof payload === 'string') {
-    const parsed = tryParseJSON(payload);
-    if (parsed) {
-      try {
-        return JSON.stringify(parsed, null, 2);
-      } catch (error) {
-        return payload;
-      }
-    }
-    return payload;
-  }
-  return '';
-};
-
-const collectChoiceContent = (choices = []) => {
-  const segments = [];
-  choices.forEach((choice) => {
-    if (choice?.message?.content) {
-      segments.push(choice.message.content);
-    }
-    const deltaContent = choice?.delta?.content;
-    if (typeof deltaContent === 'string') {
-      segments.push(deltaContent);
-    }
-  });
-  return segments.join('');
-};
-
-const parseStreamingResponse = (raw) => {
-  if (!raw || typeof raw !== 'string') {
-    return [];
-  }
-  const objects = [];
-  let buffer = '';
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-
-  for (let i = 0; i < raw.length; i += 1) {
-    const char = raw[i];
-    buffer += char;
-
-    if (escape) {
-      escape = false;
-      continue;
-    }
-
-    if (char === '\\') {
-      escape = true;
-      continue;
-    }
-
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) {
-      continue;
-    }
-
-    if (char === '{') {
-      depth += 1;
-    } else if (char === '}') {
-      depth -= 1;
-    }
-
-    if (depth === 0 && buffer.trim()) {
-      const parsed = tryParseJSON(buffer);
-      if (parsed) {
-        objects.push(parsed);
-      }
-      buffer = '';
-    }
-  }
-
-  return objects;
-};
-
-const buildRequestNode = (detail) => {
-  if (!detail?.request_body) {
-    return null;
-  }
-  return renderPreBlock(formatJSON(detail.request_body));
-};
-
-const buildResponseNode = (detail, t) => {
-  if (!detail?.response_body) {
-    return null;
-  }
-  const trimmed = detail.response_body.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const single = tryParseJSON(trimmed);
-  if (single) {
-    const responseText = collectChoiceContent(single.choices || []);
-    const parts = [];
-    if (responseText) {
-      parts.push(`${t('回复文本')}: ${responseText}`);
-    }
-    parts.push(`${t('原始数据')}:\n${JSON.stringify(single, null, 2)}`);
-    return renderPreBlock(parts.join('\n\n'));
-  }
-
-  const streamObjects = parseStreamingResponse(trimmed);
-  if (streamObjects.length === 0) {
-    return renderPreBlock(trimmed);
-  }
-
-  const aggregatedText = streamObjects
-    .map((obj) => collectChoiceContent(obj.choices || []))
-    .join('')
-    .trim();
-
-  const usageObject = [...streamObjects].reverse().find((obj) => obj.usage);
-
-  const parts = [];
-  if (aggregatedText) {
-    parts.push(`${t('回复文本')}: ${aggregatedText}`);
-  }
-  if (usageObject?.usage) {
-    parts.push(
-      `${t('令牌统计')}:\n${JSON.stringify(usageObject.usage, null, 2)}`,
-    );
-  }
-  parts.push(
-    `${t('原始数据')}:\n${streamObjects
-      .map((obj) => JSON.stringify(obj, null, 2))
-      .join('\n\n')}`,
-  );
-
-  return renderPreBlock(parts.join('\n\n'));
-};
-
 export const useLogsData = () => {
   const { t } = useTranslation();
 
@@ -232,6 +59,7 @@ export const useLogsData = () => {
     RETRY: 'retry',
     IP: 'ip',
     DETAILS: 'details',
+    ACTION: 'action',
   };
 
   // Basic state
@@ -285,6 +113,11 @@ export const useLogsData = () => {
   const [showUserInfo, setShowUserInfoModal] = useState(false);
   const [userInfoData, setUserInfoData] = useState(null);
 
+  // Detail drawer state
+  const [detailDrawerVisible, setDetailDrawerVisible] = useState(false);
+  const [detailViewMode, setDetailViewMode] = useState('formatted');
+  const [selectedLogDetail, setSelectedLogDetail] = useState(null);
+
   // Load saved column preferences from localStorage
   useEffect(() => {
     const savedColumns = localStorage.getItem(STORAGE_KEY);
@@ -327,6 +160,7 @@ export const useLogsData = () => {
       [COLUMN_KEYS.RETRY]: isAdminUser,
       [COLUMN_KEYS.IP]: true,
       [COLUMN_KEYS.DETAILS]: true,
+      [COLUMN_KEYS.ACTION]: isAdminUser,
     };
   };
 
@@ -339,6 +173,9 @@ export const useLogsData = () => {
 
   // Handle column visibility change
   const handleColumnVisibilityChange = (columnKey, checked) => {
+    if (columnKey === COLUMN_KEYS.ACTION && !isAdminUser) {
+      return;
+    }
     const updatedColumns = { ...visibleColumns, [columnKey]: checked };
     setVisibleColumns(updatedColumns);
   };
@@ -352,7 +189,8 @@ export const useLogsData = () => {
       if (
         (key === COLUMN_KEYS.CHANNEL ||
           key === COLUMN_KEYS.USERNAME ||
-          key === COLUMN_KEYS.RETRY) &&
+          key === COLUMN_KEYS.RETRY ||
+          key === COLUMN_KEYS.ACTION) &&
         !isAdminUser
       ) {
         updatedColumns[key] = false;
@@ -475,6 +313,20 @@ export const useLogsData = () => {
     } else {
       showError(message);
     }
+  };
+
+  const openDetailDrawer = (log) => {
+    if (!log || !log.detail) {
+      return;
+    }
+    setSelectedLogDetail(log);
+    setDetailViewMode('formatted');
+    setDetailDrawerVisible(true);
+  };
+
+  const closeDetailDrawer = () => {
+    setDetailDrawerVisible(false);
+    setSelectedLogDetail(null);
   };
 
   // Format logs data
@@ -635,28 +487,18 @@ export const useLogsData = () => {
           });
         }
       }
-      if (logs[i].detail) {
-        const requestNode = buildRequestNode(logs[i].detail);
-        if (requestNode) {
-          expandDataLocal.push({
-            key: t('请求体'),
-            value: requestNode,
-          });
-        }
-
-        const responseNode = buildResponseNode(logs[i].detail, t);
-        if (responseNode) {
-          expandDataLocal.push({
-            key: t('响应内容'),
-            value: responseNode,
-          });
-        }
-      }
       expandDatesLocal[logs[i].key] = expandDataLocal;
     }
 
     setExpandData(expandDatesLocal);
     setLogs(logs);
+    setSelectedLogDetail((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const refreshed = logs.find((item) => item.id === prev.id);
+      return refreshed || prev;
+    });
   };
 
   // Load logs function
@@ -803,6 +645,14 @@ export const useLogsData = () => {
     setShowUserInfoModal,
     userInfoData,
     showUserInfoFunc,
+
+    // Detail drawer
+    detailDrawerVisible,
+    detailViewMode,
+    setDetailViewMode,
+    selectedLogDetail,
+    openDetailDrawer,
+    closeDetailDrawer,
 
     // Functions
     loadLogs,
