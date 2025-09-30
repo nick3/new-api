@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -37,6 +38,18 @@ type Log struct {
 	Ip               string `json:"ip" gorm:"index;default:''"`
 	RequestId        string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	Other            string `json:"other"`
+	Detail           *LogDetail `json:"detail,omitempty" gorm:"-"`
+}
+
+type LogDetail struct {
+	LogId        int    `json:"log_id" gorm:"primaryKey"`
+	RequestBody  string `json:"request_body" gorm:"type:longtext"`
+	ResponseBody string `json:"response_body" gorm:"type:longtext"`
+	CreatedAt    int64  `json:"created_at" gorm:"autoCreateTime"`
+}
+
+func (LogDetail) TableName() string {
+	return "log_details"
 }
 
 // don't use iota, avoid change log type value
@@ -67,6 +80,7 @@ func formatUserLogs(logs []*Log, startIdx int) {
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
+	attachLogDetails(logs)
 	formatUserLogs(logs, 0)
 	return logs, err
 }
@@ -131,21 +145,25 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	reqPreview, respPreview := resolveLogPayloads(c, "", "")
+	persistLogDetail(c, log.Id, reqPreview, respPreview)
 }
 
 type RecordConsumeLogParams struct {
-	ChannelId        int                    `json:"channel_id"`
-	PromptTokens     int                    `json:"prompt_tokens"`
-	CompletionTokens int                    `json:"completion_tokens"`
-	ModelName        string                 `json:"model_name"`
-	TokenName        string                 `json:"token_name"`
-	Quota            int                    `json:"quota"`
-	Content          string                 `json:"content"`
-	TokenId          int                    `json:"token_id"`
-	UseTimeSeconds   int                    `json:"use_time_seconds"`
-	IsStream         bool                   `json:"is_stream"`
-	Group            string                 `json:"group"`
-	Other            map[string]interface{} `json:"other"`
+	ChannelId           int                    `json:"channel_id"`
+	PromptTokens        int                    `json:"prompt_tokens"`
+	CompletionTokens    int                    `json:"completion_tokens"`
+	ModelName           string                 `json:"model_name"`
+	TokenName           string                 `json:"token_name"`
+	Quota               int                    `json:"quota"`
+	Content             string                 `json:"content"`
+	TokenId             int                    `json:"token_id"`
+	UseTimeSeconds      int                    `json:"use_time_seconds"`
+	IsStream            bool                   `json:"is_stream"`
+	Group               string                 `json:"group"`
+	Other               map[string]interface{} `json:"other"`
+	RequestBodyPreview  string                 `json:"-" gorm:"-"`
+	ResponseBodyPreview string                 `json:"-" gorm:"-"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -192,6 +210,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	requestPreview, responsePreview := resolveLogPayloads(c, params.RequestBodyPreview, params.ResponseBodyPreview)
+	persistLogDetail(c, log.Id, requestPreview, responsePreview)
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
@@ -242,6 +262,71 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
+func attachLogDetails(logs []*Log) {
+	if len(logs) == 0 {
+		return
+	}
+	ids := make([]int, 0, len(logs))
+	for _, log := range logs {
+		if log != nil {
+			ids = append(ids, log.Id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	detailsMap, err := GetLogDetailsByIDs(ids)
+	if err != nil {
+		// silently ignore; detail retrieval failure should not break log listing
+		logger.LogError(context.Background(), "failed to load log details: "+err.Error())
+		return
+	}
+	for _, log := range logs {
+		if log == nil {
+			continue
+		}
+		if detail, ok := detailsMap[log.Id]; ok {
+			log.Detail = detail
+		}
+	}
+}
+
+func resolveLogPayloads(c *gin.Context, requestPreview string, responsePreview string) (string, string) {
+	request := requestPreview
+	response := responsePreview
+	if c == nil {
+		return request, response
+	}
+	if request == "" {
+		request = common.GetContextKeyString(c, constant.ContextKeyLoggedRequestBody)
+	}
+	if response == "" {
+		response = common.GetContextKeyString(c, constant.ContextKeyLoggedResponseBody)
+	}
+	return request, response
+}
+
+func persistLogDetail(c *gin.Context, logId int, request string, response string) {
+	if logId == 0 {
+		return
+	}
+	if request == "" && response == "" {
+		return
+	}
+	detail := &LogDetail{
+		LogId:        logId,
+		RequestBody:  request,
+		ResponseBody: response,
+	}
+	if err := LOG_DB.Create(detail).Error; err != nil {
+		ctx := context.Background()
+		if c != nil {
+			ctx = c
+		}
+		logger.LogError(ctx, "failed to record log detail: "+err.Error())
+	}
+}
+
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
@@ -282,6 +367,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
+	attachLogDetails(logs)
 
 	channelIds := types.NewSet[int]()
 	for _, log := range logs {
@@ -369,8 +455,24 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		return nil, 0, errors.New("查询日志失败")
 	}
 
+	attachLogDetails(logs)
 	formatUserLogs(logs, startIdx)
 	return logs, total, err
+}
+
+func GetLogDetailsByIDs(ids []int) (map[int]*LogDetail, error) {
+	if len(ids) == 0 {
+		return map[int]*LogDetail{}, nil
+	}
+	var details []*LogDetail
+	if err := LOG_DB.Where("log_id IN ?", ids).Find(&details).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[int]*LogDetail, len(details))
+	for _, detail := range details {
+		result[detail.LogId] = detail
+	}
+	return result, nil
 }
 
 type Stat struct {

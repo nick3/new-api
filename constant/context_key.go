@@ -56,6 +56,10 @@ const (
 
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
 
+	/* logging payload previews */
+	ContextKeyLoggedRequestBody  ContextKey = "logged_request_body"
+	ContextKeyLoggedResponseBody ContextKey = "logged_response_body"
+
 	// ContextKeyFileSourcesToCleanup stores file sources that need cleanup when request ends
 	ContextKeyFileSourcesToCleanup ContextKey = "file_sources_to_cleanup"
 

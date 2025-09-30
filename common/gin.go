@@ -33,6 +33,29 @@ func IsRequestBodyTooLargeError(err error) bool {
 	return errors.As(err, &mbe)
 }
 
+func captureRequestBodyPreview(c *gin.Context, storage BodyStorage) {
+	if c == nil || storage == nil {
+		return
+	}
+	currentPos, err := storage.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return
+	}
+	if _, err = storage.Seek(0, io.SeekStart); err != nil {
+		return
+	}
+	defer func() {
+		_, _ = storage.Seek(currentPos, io.SeekStart)
+	}()
+
+	const maxPreviewBytes = 8 << 10
+	preview, err := io.ReadAll(io.LimitReader(storage, maxPreviewBytes))
+	if err != nil {
+		return
+	}
+	CapturePayloadForLog(c, constant.ContextKeyLoggedRequestBody, preview)
+}
+
 func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 	// 首先检查是否有 BodyStorage 缓存
 	if storage, exists := c.Get(KeyBodyStorage); exists && storage != nil {
@@ -40,6 +63,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 			if _, err := bs.Seek(0, io.SeekStart); err != nil {
 				return nil, fmt.Errorf("failed to seek body storage: %w", err)
 			}
+			captureRequestBodyPreview(c, bs)
 			return bs, nil
 		}
 	}
@@ -53,6 +77,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 				return nil, err
 			}
 			c.Set(KeyBodyStorage, bs)
+			CapturePayloadForLog(c, constant.ContextKeyLoggedRequestBody, b)
 			return bs, nil
 		}
 	}
@@ -78,6 +103,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 
 	// 缓存存储对象
 	c.Set(KeyBodyStorage, storage)
+	captureRequestBodyPreview(c, storage)
 
 	return storage, nil
 }

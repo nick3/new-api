@@ -244,6 +244,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			if !strings.HasPrefix(data, "[DONE]") {
 				info.SetFirstResponseTime()
 				info.ReceivedResponseCount++
+				common.AppendPayloadChunkForLog(c, constant.ContextKeyLoggedResponseBody, data)
 
 				select {
 				case dataChan <- data:
