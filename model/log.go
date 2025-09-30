@@ -44,7 +44,7 @@ type LogDetail struct {
 	LogId        int    `json:"log_id" gorm:"primaryKey"`
 	RequestBody  string `json:"request_body" gorm:"type:longtext"`
 	ResponseBody string `json:"response_body" gorm:"type:longtext"`
-	CreatedAt    int64  `json:"created_at" gorm:"autoCreateTime"`
+	CreatedAt    int64  `json:"created_at" gorm:"bigint;index;autoCreateTime"`
 }
 
 func (LogDetail) TableName() string {

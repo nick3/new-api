@@ -43,7 +43,20 @@ func pruneExpiredLogDetails(ctx context.Context) {
 	var totalDeleted int64
 
 	for {
-		result := LOG_DB.Where("created_at < ?", cutoff).Limit(logDetailCleanupBatchSize).Delete(&LogDetail{})
+		// Check context cancellation
+		if ctx.Err() != nil {
+			logger.LogError(ctx, "log detail cleanup cancelled: "+ctx.Err().Error())
+			break
+		}
+
+		// Use indexed ORDER BY to ensure efficient query execution
+		// The index on created_at enables the database to efficiently
+		// identify and delete the oldest records in each batch
+		result := LOG_DB.Where("created_at < ?", cutoff).
+			Order("created_at ASC").
+			Limit(logDetailCleanupBatchSize).
+			Delete(&LogDetail{})
+
 		if result.Error != nil {
 			logger.LogError(ctx, fmt.Sprintf("failed to prune log detail records: %s", result.Error.Error()))
 			break
@@ -55,6 +68,9 @@ func pruneExpiredLogDetails(ctx context.Context) {
 		if result.RowsAffected < logDetailCleanupBatchSize {
 			break
 		}
+
+		// Add a small delay between batches to reduce database load
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	if totalDeleted > 0 {
