@@ -821,13 +821,6 @@ export const getLogsColumns = ({
       title: (
         <div className='flex items-center gap-1'>
           {t('IP')}
-          <Tooltip
-            content={t(
-              '只有当用户设置开启IP记录时，才会进行请求和错误类型日志的IP记录',
-            )}
-          >
-            <IconHelpCircle className='text-gray-400 cursor-help' />
-          </Tooltip>
         </div>
       ),
       dataIndex: 'ip',
