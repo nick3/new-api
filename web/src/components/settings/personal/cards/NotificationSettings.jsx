@@ -33,7 +33,7 @@ import {
   Col,
 } from '@douyinfe/semi-ui';
 import { IconMail, IconKey, IconBell, IconLink } from '@douyinfe/semi-icons';
-import { ShieldCheck, Bell, DollarSign, Settings } from 'lucide-react';
+import { Bell, DollarSign, Settings } from 'lucide-react';
 import {
   renderQuotaWithPrompt,
   API,
@@ -363,7 +363,7 @@ const NotificationSettings = ({
             {t('其他设置')}
           </Typography.Text>
           <div className='text-xs text-gray-600'>
-            {t('通知、价格和隐私相关设置')}
+            {t('通知和价格相关设置')}
           </div>
         </div>
       </div>
@@ -620,30 +620,6 @@ const NotificationSettings = ({
                   }
                   extraText={t(
                     '当模型没有设置价格时仍接受调用，仅当您信任该网站时使用，可能会产生高额费用',
-                  )}
-                />
-              </div>
-            </TabPane>
-
-            {/* 隐私设置 Tab */}
-            <TabPane
-              tab={
-                <div className='flex items-center'>
-                  <ShieldCheck size={16} className='mr-2' />
-                  {t('隐私设置')}
-                </div>
-              }
-              itemKey='privacy'
-            >
-              <div className='py-4'>
-                <Form.Switch
-                  field='recordIpLog'
-                  label={t('记录请求与错误日志IP')}
-                  checkedText={t('开')}
-                  uncheckedText={t('关')}
-                  onChange={(value) => handleFormChange('recordIpLog', value)}
-                  extraText={t(
-                    '开启后，仅"消费"和"错误"日志将记录您的客户端IP地址',
                   )}
                 />
               </div>

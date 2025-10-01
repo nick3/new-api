@@ -41,7 +41,7 @@ import {
   renderClaudeModelPrice,
   renderModelPrice,
 } from '../../../helpers';
-import { IconHelpCircle, IconEyeOpened } from '@douyinfe/semi-icons';
+import { IconEyeOpened } from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
 
 const colors = [
@@ -461,13 +461,6 @@ export const getLogsColumns = ({
       title: (
         <div className='flex items-center gap-1'>
           {t('IP')}
-          <Tooltip
-            content={t(
-              '只有当用户设置开启IP记录时，才会进行请求和错误类型日志的IP记录',
-            )}
-          >
-            <IconHelpCircle className='text-gray-400 cursor-help' />
-          </Tooltip>
         </div>
       ),
       dataIndex: 'ip',
@@ -524,6 +517,7 @@ export const getLogsColumns = ({
       key: COLUMN_KEYS.DETAILS,
       title: t('详情'),
       dataIndex: 'content',
+      fixed: !isAdminUser ? 'right' : false,
       render: (text, record, index) => {
         let other = getLogOther(record.other);
         if (other == null || record.type !== 2) {
