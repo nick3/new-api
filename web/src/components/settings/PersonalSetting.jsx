@@ -81,6 +81,9 @@ const PersonalSetting = () => {
     webhookSecret: '',
     notificationEmail: '',
     barkUrl: '',
+    gotifyUrl: '',
+    gotifyToken: '',
+    gotifyPriority: 5,
     acceptUnsetModelRatioModel: false,
   });
 
@@ -148,6 +151,12 @@ const PersonalSetting = () => {
         webhookSecret: settings.webhook_secret || '',
         notificationEmail: settings.notification_email || '',
         barkUrl: settings.bark_url || '',
+        gotifyUrl: settings.gotify_url || '',
+        gotifyToken: settings.gotify_token || '',
+        gotifyPriority:
+          settings.gotify_priority !== undefined
+            ? settings.gotify_priority
+            : 5,
         acceptUnsetModelRatioModel:
           settings.accept_unset_model_ratio_model || false,
       });
@@ -404,6 +413,12 @@ const PersonalSetting = () => {
         webhook_secret: notificationSettings.webhookSecret,
         notification_email: notificationSettings.notificationEmail,
         bark_url: notificationSettings.barkUrl,
+        gotify_url: notificationSettings.gotifyUrl,
+        gotify_token: notificationSettings.gotifyToken,
+        gotify_priority: (() => {
+          const parsed = parseInt(notificationSettings.gotifyPriority);
+          return isNaN(parsed) ? 5 : parsed;
+        })(),
         accept_unset_model_ratio_model:
           notificationSettings.acceptUnsetModelRatioModel,
       });
