@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"one-api/common"
-	"one-api/dto"
-	"one-api/model"
-	"one-api/relay/channel"
-	relaycommon "one-api/relay/common"
-	"one-api/service"
-	"one-api/setting/system_setting"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -183,4 +184,13 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	return &taskResult, nil
+}
+
+func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) (*relaycommon.OpenAIVideo, error) {
+	openAIVideo := &relaycommon.OpenAIVideo{}
+	err := json.Unmarshal(task.Data, openAIVideo)
+	if err != nil {
+		return nil, errors.Wrap(err, "unmarshal to OpenAIVideo failed")
+	}
+	return openAIVideo, nil
 }
