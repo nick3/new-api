@@ -4,11 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"one-api/common"
-	"one-api/constant"
-	"one-api/dto"
-	"one-api/logger"
-	"one-api/types"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
