@@ -16,7 +16,25 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
+
+type LargeText string
+
+func (LargeText) GormDataType() string {
+	return "text"
+}
+
+func (LargeText) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
+	switch db.Dialector.Name() {
+	case "mysql":
+		return "LONGTEXT"
+	case "postgres":
+		return "TEXT"
+	default:
+		return "TEXT"
+	}
+}
 
 type Log struct {
 	Id               int        `json:"id" gorm:"index:idx_created_at_id,priority:1"`
@@ -42,10 +60,10 @@ type Log struct {
 }
 
 type LogDetail struct {
-	LogId        int    `json:"log_id" gorm:"primaryKey"`
-	RequestBody  string `json:"request_body" gorm:"type:longtext"`
-	ResponseBody string `json:"response_body" gorm:"type:longtext"`
-	CreatedAt    int64  `json:"created_at" gorm:"bigint;index;autoCreateTime"`
+	LogId        int       `json:"log_id" gorm:"primaryKey"`
+	RequestBody  LargeText `json:"request_body"`
+	ResponseBody LargeText `json:"response_body"`
+	CreatedAt    int64     `json:"created_at" gorm:"bigint;index;autoCreateTime"`
 }
 
 func (LogDetail) TableName() string {
@@ -269,8 +287,8 @@ func persistLogDetail(c *gin.Context, logId int, request string, response string
 	}
 	detail := &LogDetail{
 		LogId:        logId,
-		RequestBody:  request,
-		ResponseBody: response,
+		RequestBody:  LargeText(request),
+		ResponseBody: LargeText(response),
 	}
 	if err := LOG_DB.Create(detail).Error; err != nil {
 		ctx := context.Background()
