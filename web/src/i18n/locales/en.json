@@ -1041,6 +1041,8 @@
     "暂无常见问答": "No FAQ",
     "暂无成功模型": "No successful models",
     "暂无数据": "No data",
+    "工具调用": "Tool call",
+    "工具结果": "Tool result",
     "暂无数据，点击下方按钮添加键值对": "No data, click the button below to add key-value pairs",
     "暂无模型描述": "No model description",
     "暂无监控数据": "No monitoring data",
