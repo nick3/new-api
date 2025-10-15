@@ -1,3 +1,20 @@
+## Release v0.9.8
+
+Release date: 2025-10-15
+
+Summary
+- Minor release: small improvements and housekeeping following v0.9.7-patch.1. No breaking API changes.
+
+Notable changes
+- Chore: Bump version to v0.9.8 and update release metadata.
+- Chore: Prepare release notes.
+
+Migration notes
+- No database migrations required.
+
+Contact
+- If you see any issues after upgrading, please open an issue or contact the maintainers.
+
 # Release v0.9.7-patch.1
 
 Release date: 2025-10-13
