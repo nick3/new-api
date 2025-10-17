@@ -47,6 +47,7 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	if err != nil {
 		common.SysError("error marshalling stream response: " + err.Error())
 	} else {
+		common.AppendPayloadChunkForLog(c, constant.ContextKeyLoggedResponseBody, string(jsonData))
 		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
 	}
@@ -55,6 +56,7 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 }
 
 func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
+	common.AppendPayloadChunkForLog(c, constant.ContextKeyLoggedResponseBody, data)
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
 	_ = FlushWriter(c)
