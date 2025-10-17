@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   SideSheet,
   Typography,
@@ -28,8 +28,10 @@ import {
   Radio,
   Tag,
   Button,
+  Tooltip,
+  Toast,
 } from '@douyinfe/semi-ui';
-import { IconClose } from '@douyinfe/semi-icons';
+import { IconClose, IconCopy } from '@douyinfe/semi-icons';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -329,6 +331,105 @@ const segmentsToPlainText = (segments) => {
     .filter((segment) => segment.type === 'text' || segment.type === 'reasoning')
     .map((segment) => segment.value)
     .join('\n');
+};
+
+const copyToClipboard = async (text) => {
+  if (!text || !text.trim()) {
+    return false;
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  if (typeof document === 'undefined') {
+    return false;
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+
+    const selection = document.getSelection();
+    const selectedRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+    textarea.select();
+    const succeeded = document.execCommand('copy');
+
+    document.body.removeChild(textarea);
+
+    if (selectedRange && selection) {
+      selection.removeAllRanges();
+      selection.addRange(selectedRange);
+    }
+
+    return succeeded;
+  } catch (error) {
+    return false;
+  }
+};
+
+const getSegmentCopyText = (segment, t) => {
+  if (!segment) {
+    return '';
+  }
+
+  const value = typeof segment.value === 'string' ? segment.value : String(segment.value ?? '');
+
+  switch (segment.type) {
+    case 'reasoning':
+      return `${t('思考过程')}:\n${value}`.trim();
+    case 'tool_call': {
+      const parts = [t('工具调用')];
+      if (segment.name) {
+        parts.push(`(${segment.name})`);
+      }
+      if (segment.id) {
+        parts.push(`${t('ID')}: ${segment.id}`);
+      }
+      return `${parts.join(' ')}\n${value}`.trim();
+    }
+    case 'tool_result': {
+      const parts = [t('工具结果')];
+      if (segment.name) {
+        parts.push(`(${segment.name})`);
+      }
+      if (segment.id) {
+        parts.push(`${t('ID')}: ${segment.id}`);
+      }
+      return `${parts.join(' ')}\n${value}`.trim();
+    }
+    case 'json': {
+      const label = segment.label ? t(segment.label) : '';
+      return label ? `${label}:\n${value}`.trim() : value;
+    }
+    default:
+      return value;
+  }
+};
+
+const buildMessageCopyText = (message, t) => {
+  if (!message) {
+    return '';
+  }
+
+  const segments = Array.isArray(message.segments)
+    ? message.segments.filter(Boolean)
+    : [];
+
+  if (segments.length === 0) {
+    return (message.text ?? '').trim();
+  }
+
+  return segments
+    .map((segment) => getSegmentCopyText(segment, t))
+    .filter((text) => text && text.trim())
+    .join('\n\n');
 };
 
 const appendSegment = (segments, segment) => {
@@ -1073,7 +1174,46 @@ const buildFormattedView = ({
   requestMessages,
   responseMessages,
   responseUsage,
+  onCopyMessage,
 }) => {
+  const renderMessageList = (
+    messages,
+    emptyText,
+    keyPrefix,
+    tagColor,
+    containerClassName,
+  ) => {
+    if (!messages || messages.length === 0) {
+      return <Text type='tertiary'>{emptyText}</Text>;
+    }
+
+    return messages.map((message, index) => (
+      <div
+        key={`${keyPrefix}-${index}`}
+        className={`relative group ${containerClassName}`}
+      >
+        <Space align='start' style={{ width: '100%', gap: 12 }}>
+          <Tag type='ghost' color={tagColor}>
+            {message.role}
+          </Tag>
+          <div style={{ flex: 1, width: '100%' }}>
+            <MessageContent message={message} t={t} />
+          </div>
+        </Space>
+        <Tooltip content={t('复制')}>
+          <Button
+            size='small'
+            theme='borderless'
+            icon={<IconCopy />}
+            aria-label={t('复制')}
+            className='absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity'
+            onClick={() => onCopyMessage && onCopyMessage(message)}
+          />
+        </Tooltip>
+      </div>
+    ));
+  };
+
   return (
     <Space vertical align='start' style={{ width: '100%' }}>
       <Title heading={4}>{t('请求参数')}</Title>
@@ -1092,24 +1232,12 @@ const buildFormattedView = ({
         align='start'
         style={{ width: '100%', gap: 12 }}
       >
-        {requestMessages.length === 0 ? (
-          <Text type='tertiary'>{t('该请求没有消息内容')}</Text>
-        ) : (
-          requestMessages.map((message, index) => (
-            <div
-              key={`request-msg-${index}`}
-              className='rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2 w-full'
-            >
-              <Space align='start' style={{ width: '100%', gap: 12 }}>
-                <Tag type='ghost' color='purple'>
-                  {message.role}
-                </Tag>
-                <div style={{ flex: 1, width: '100%' }}>
-                  <MessageContent message={message} t={t} />
-                </div>
-              </Space>
-            </div>
-          ))
+        {renderMessageList(
+          requestMessages,
+          t('该请求没有消息内容'),
+          'request-msg',
+          'purple',
+          'rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2 w-full',
         )}
       </Space>
 
@@ -1159,24 +1287,12 @@ const buildFormattedView = ({
         align='start'
         style={{ width: '100%', gap: 12 }}
       >
-        {responseMessages.length === 0 ? (
-          <Text type='tertiary'>{t('该响应没有消息内容')}</Text>
-        ) : (
-          responseMessages.map((message, index) => (
-            <div
-              key={`response-msg-${index}`}
-              className='rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-1)] px-3 py-2 w-full'
-            >
-              <Space align='start' style={{ width: '100%', gap: 12 }}>
-                <Tag type='ghost' color='blue'>
-                  {message.role}
-                </Tag>
-                <div style={{ flex: 1, width: '100%' }}>
-                  <MessageContent message={message} t={t} />
-                </div>
-              </Space>
-            </div>
-          ))
+        {renderMessageList(
+          responseMessages,
+          t('该响应没有消息内容'),
+          'response-msg',
+          'blue',
+          'rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-1)] px-3 py-2 w-full',
         )}
       </Space>
     </Space>
@@ -1214,6 +1330,24 @@ const UsageLogDetailDrawer = ({
     [responseJson, streamObjects],
   );
 
+  const handleCopyMessage = useCallback(
+    async (message) => {
+      const copyText = buildMessageCopyText(message, t);
+      if (!copyText) {
+        Toast.warning(t('暂无数据'));
+        return;
+      }
+
+      const success = await copyToClipboard(copyText);
+      if (success) {
+        Toast.success(t('消息已复制到剪贴板'));
+      } else {
+        Toast.error(t('无法复制到剪贴板，请手动复制'));
+      }
+    },
+    [t],
+  );
+
   const formattedView = useMemo(
     () =>
       buildFormattedView({
@@ -1223,6 +1357,7 @@ const UsageLogDetailDrawer = ({
         requestMessages,
         responseMessages,
         responseUsage,
+        onCopyMessage: handleCopyMessage,
       }),
     [
       t,
@@ -1231,6 +1366,7 @@ const UsageLogDetailDrawer = ({
       requestMessages,
       responseMessages,
       responseUsage,
+      handleCopyMessage,
     ],
   );
 
