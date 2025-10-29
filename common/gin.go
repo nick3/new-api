@@ -166,7 +166,7 @@ func parseFormData(data []byte, v any) error {
 		return err
 	}
 
-	return json.Unmarshal(jsonData, v)
+	return Unmarshal(jsonData, v)
 }
 
 func parseMultipartFormData(c *gin.Context, data []byte, v any) error {
@@ -177,7 +177,7 @@ func parseMultipartFormData(c *gin.Context, data []byte, v any) error {
 	}
 
 	if boundary == "" {
-		return json.Unmarshal(data, v) // Fallback to JSON
+		return Unmarshal(data, v) // Fallback to JSON
 	}
 
 	reader := multipart.NewReader(bytes.NewReader(data), boundary)
@@ -194,10 +194,10 @@ func parseMultipartFormData(c *gin.Context, data []byte, v any) error {
 			formMap[key] = vals
 		}
 	}
-	jsonData, err := json.Marshal(formMap)
+	jsonData, err := Marshal(formMap)
 	if err != nil {
 		return err
 	}
 
-	return json.Unmarshal(jsonData, v)
+	return Unmarshal(jsonData, v)
 }
