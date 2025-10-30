@@ -111,6 +111,8 @@ const splitStreamingResponse = (raw) => {
   });
 
   if (sseObjects.length > 0) {
+    // For OpenAI-style streaming responses, return the original array
+    // This will be processed by aggregateOpenAIStreamChunks later
     return sseObjects;
   }
 
@@ -599,7 +601,7 @@ const aggregateOpenAIStreamChunks = (streamObjects) => {
 
   let role = 'assistant';
   let reasoningBuffer = '';
-  const contentFragments = [];
+  let fullContent = '';
   const toolCalls = [];
 
   streamObjects.forEach((chunk) => {
@@ -613,7 +615,8 @@ const aggregateOpenAIStreamChunks = (streamObjects) => {
       role = delta.role;
     }
     if (delta.content !== undefined && delta.content !== null) {
-      contentFragments.push(delta.content);
+      // Concatenate the content fragments instead of pushing them to an array
+      fullContent += delta.content;
     }
     if (delta.reasoning_content) {
       reasoningBuffer += normaliseContent(delta.reasoning_content);
@@ -652,10 +655,9 @@ const aggregateOpenAIStreamChunks = (streamObjects) => {
 
   const message = { role };
 
-  if (contentFragments.length === 1) {
-    message.content = contentFragments[0];
-  } else if (contentFragments.length > 1) {
-    message.content = contentFragments;
+  // Set the full concatenated content as a single string
+  if (fullContent) {
+    message.content = fullContent;
   }
 
   if (reasoningBuffer.trim()) {
