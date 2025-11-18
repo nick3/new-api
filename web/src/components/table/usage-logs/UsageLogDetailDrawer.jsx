@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState, useRef } from 'react';
 import {
   SideSheet,
   Typography,
@@ -30,6 +30,8 @@ import {
   Button,
   Tooltip,
   Toast,
+  Tabs,
+  Collapse,
 } from '@douyinfe/semi-ui';
 import { IconClose, IconCopy } from '@douyinfe/semi-icons';
 
@@ -1035,7 +1037,20 @@ const buildRequestParams = (requestObject, t) => {
   pushIfPresent(t('最大Tokens'), requestObject.max_tokens);
   pushIfPresent(t('响应格式'), requestObject.response_format);
   if (requestObject.tools) {
-    pushIfPresent(t('工具调用'), JSON.stringify(requestObject.tools));
+    let count = 0;
+    if (Array.isArray(requestObject.tools)) {
+      count = requestObject.tools.length;
+    } else if (typeof requestObject.tools === 'string') {
+      const parsed = safeParseJson(requestObject.tools);
+      if (Array.isArray(parsed)) {
+        count = parsed.length;
+      } else if (parsed) {
+        count = 1;
+      }
+    } else {
+      count = 1;
+    }
+    pushIfPresent(t('工具数量'), count);
   }
   if (requestObject.user) {
     pushIfPresent(t('用户'), requestObject.user);
@@ -1045,6 +1060,7 @@ const buildRequestParams = (requestObject, t) => {
 
 const CollapsibleText = ({ text, t, isCode = false, maxLines = 6 }) => {
   const [expanded, setExpanded] = useState(false);
+  const [wrap, setWrap] = useState(true);
   if (!text || text.trim() === '') {
     return <Text type='tertiary'>{t('暂无数据')}</Text>;
   }
@@ -1057,7 +1073,10 @@ const CollapsibleText = ({ text, t, isCode = false, maxLines = 6 }) => {
   return (
     <div className='flex flex-col gap-2 w-full'>
       {isCode ? (
-        <pre className='whitespace-pre-wrap break-all font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3'>
+        <pre
+          className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrap ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
+          style={{ maxHeight: 320, overflow: 'auto' }}
+        >
           {displayedText}
         </pre>
       ) : (
@@ -1065,15 +1084,169 @@ const CollapsibleText = ({ text, t, isCode = false, maxLines = 6 }) => {
           {displayedText}
         </Paragraph>
       )}
-      {shouldTruncate && (
-        <Button
-          size='small'
-          type='tertiary'
-          onClick={() => setExpanded((prev) => !prev)}
+      <Space>
+        {shouldTruncate ? (
+          <Button
+            size='small'
+            type='tertiary'
+            onClick={() => setExpanded((prev) => !prev)}
+          >
+            {expanded ? t('收起') : t('展开')}
+          </Button>
+        ) : null}
+        {isCode ? (
+          <Button
+            size='small'
+            type='tertiary'
+            onClick={() => setWrap((prev) => !prev)}
+          >
+            {wrap ? t('关闭换行') : t('开启换行')}
+          </Button>
+        ) : null}
+      </Space>
+    </div>
+  );
+};
+
+const ToolsSummary = ({ tools, t }) => {
+  let toolsArray = [];
+  if (Array.isArray(tools)) {
+    toolsArray = tools;
+  } else if (typeof tools === 'string') {
+    const parsed = safeParseJson(tools);
+    if (Array.isArray(parsed)) {
+      toolsArray = parsed;
+    } else if (parsed) {
+      toolsArray = [parsed];
+    }
+  } else if (tools) {
+    toolsArray = [tools];
+  }
+
+  if (!toolsArray || toolsArray.length === 0) {
+    return null;
+  }
+
+  const renderToolPanel = (tool, index) => {
+    let name = tool?.name;
+    let description = tool?.description;
+    let schema = tool?.parameters;
+    if (!name && tool?.function) {
+      name = tool.function.name;
+    }
+    if (!description && tool?.function) {
+      description = tool.function.description;
+    }
+    if (!schema && tool?.function) {
+      schema = tool.function.parameters;
+    }
+    if (!schema && tool?.input_schema) {
+      schema = tool.input_schema;
+    }
+
+    const required = Array.isArray(schema?.required) ? schema.required : [];
+    const properties = schema?.properties || {};
+    const params = Object.keys(properties || {}).map((key) => {
+      const prop = properties[key] || {};
+      const type = Array.isArray(prop.type)
+        ? prop.type.join('|')
+        : typeof prop.type === 'string'
+        ? prop.type
+        : prop.enum
+        ? 'enum'
+        : prop.anyOf || prop.oneOf
+        ? 'union'
+        : 'any';
+      return {
+        key,
+        type,
+        required: required.includes(key),
+        desc: prop.description || '',
+      };
+    });
+    const headerRight = (
+      <Space wrap spacing={8} className='mr-2'>
+        {params.length > 0
+          ? params.map((p) => (
+              <Tag key={`param-pill-${index}-${p.key}`} type='ghost' color='blue'>
+                {p.key}
+              </Tag>
+            ))
+          : <Text type='tertiary'>{t('暂无参数')}</Text>}
+      </Space>
+    );
+
+    const header = (
+      <div className='w-full flex items-center justify-between'>
+        <Space align='center' spacing={8}>
+          <Text>{name || t('未命名工具')}</Text>
+        </Space>
+        {headerRight}
+      </div>
+    );
+
+    const content = (
+      <div className='w-full flex flex-col gap-8'>
+        {description ? (
+          <Paragraph style={{ marginBottom: 0 }}>{description}</Paragraph>
+        ) : null}
+        {params.length > 0 ? (
+          <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
+            {params.map((p) => (
+              <Space align='center' wrap spacing={8} key={`param-${name}-${p.key}`} style={{ width: '100%' }}>
+                <Tag type='ghost' color='blue'>{p.key}</Tag>
+                <Tag type='ghost' color='purple'>{p.type}</Tag>
+                <Tag type='ghost' color={p.required ? 'orange' : 'green'}>
+                  {p.required ? t('必填') : t('可选')}
+                </Tag>
+                {p.desc ? <Text type='tertiary'>{p.desc}</Text> : null}
+              </Space>
+            ))}
+          </Space>
+        ) : (
+          <Text type='tertiary'>{t('暂无参数')}</Text>
+        )}
+      </div>
+    );
+
+    return (
+      <Collapse.Panel header={header} itemKey={`tool-${index}`}>
+        {content}
+      </Collapse.Panel>
+    );
+  };
+
+  return (
+    <div className='w-full flex flex-col'>
+      <Space align='center' spacing={8}>
+        <Text strong>{t('工具清单')}</Text>
+        <Tag type='ghost' color='orange'>
+          {t('数量')}: {toolsArray.length}
+        </Tag>
+      </Space>
+      <Collapse defaultActiveKey={[]}>
+        {toolsArray.map((tool, index) => renderToolPanel(tool, index))}
+      </Collapse>
+    </div>
+  );
+};
+
+const ParamsGrid = ({ data, t }) => {
+  const items = Array.isArray(data) ? data : [];
+  if (items.length === 0) {
+    return <Text type='tertiary'>{t('无请求参数')}</Text>;
+  }
+  return (
+    <div className='grid grid-cols-1 md:grid-cols-3 gap-2 w-full'>
+      {items.map((row, index) => (
+        <div
+          key={`param-${index}`}
+          className='rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2'
         >
-          {expanded ? t('收起') : t('展开')}
-        </Button>
-      )}
+          <Text type='tertiary'>{row.key}</Text>
+          <Paragraph style={{ marginBottom: 0 }}>{row.value}</Paragraph>
+        </div>
+      ))}
     </div>
   );
 };
@@ -1108,8 +1281,30 @@ const MessageSegmentView = ({ segment, t }) => {
                 {t('ID')}: {segment.id}
               </Tag>
             ) : null}
+            <Tooltip content={t('复制')}>
+              <Button
+                size='small'
+                theme='borderless'
+                icon={<IconCopy />}
+                aria-label={t('复制')}
+                onClick={async () => {
+                  const ok = await copyToClipboard(getSegmentCopyText(segment, t));
+                  if (ok) {
+                    Toast.success(t('消息已复制到剪贴板'));
+                  } else {
+                    Toast.error(t('无法复制到剪贴板，请手动复制'));
+                  }
+                }}
+              />
+            </Tooltip>
           </Space>
-          <CollapsibleText text={segment.value} t={t} isCode />
+          {(() => {
+            const parsed = safeParseJson(segment.value);
+            if (parsed && typeof parsed === 'object') {
+              return <JsonViewer data={parsed} t={t} />;
+            }
+            return <CollapsibleText text={segment.value} t={t} isCode />;
+          })()}
         </div>
       );
     case 'tool_result':
@@ -1127,6 +1322,22 @@ const MessageSegmentView = ({ segment, t }) => {
                 {t('ID')}: {segment.id}
               </Tag>
             ) : null}
+            <Tooltip content={t('复制')}>
+              <Button
+                size='small'
+                theme='borderless'
+                icon={<IconCopy />}
+                aria-label={t('复制')}
+                onClick={async () => {
+                  const ok = await copyToClipboard(getSegmentCopyText(segment, t));
+                  if (ok) {
+                    Toast.success(t('消息已复制到剪贴板'));
+                  } else {
+                    Toast.error(t('无法复制到剪贴板，请手动复制'));
+                  }
+                }}
+              />
+            </Tooltip>
           </Space>
           <CollapsibleText text={segment.value} t={t} isCode />
         </div>
@@ -1169,6 +1380,172 @@ const MessageContent = ({ message, t }) => {
   );
 };
 
+const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) => {
+  const [wrapReq, setWrapReq] = useState(true);
+  const [wrapRes, setWrapRes] = useState(true);
+  const requestText = formatJsonString(requestRaw) || t('暂无数据');
+  const responseText = (() => {
+    if (responseJson) {
+      return formatJsonString(responseRaw);
+    }
+    if (Array.isArray(streamObjects) && streamObjects.length > 0) {
+      return streamObjects.map((obj) => JSON.stringify(obj, null, 2)).join('\n\n');
+    }
+    return responseRaw ? responseRaw.trim() : t('暂无数据');
+  })();
+
+  return (
+    <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
+      <div style={{ width: '100%' }}>
+        <Space align='center' style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Title heading={4}>{t('请求体')}</Title>
+          <Space>
+            <Button
+              size='small'
+              type='tertiary'
+              onClick={async () => {
+                const ok = await copyToClipboard(requestText);
+                if (ok) {
+                  Toast.success(t('消息已复制到剪贴板'));
+                } else {
+                  Toast.error(t('无法复制到剪贴板，请手动复制'));
+                }
+              }}
+            >
+              {t('复制')}
+            </Button>
+            <Button size='small' type='tertiary' onClick={() => setWrapReq((v) => !v)}>
+              {wrapReq ? t('关闭换行') : t('开启换行')}
+            </Button>
+          </Space>
+        </Space>
+        <pre
+          className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrapReq ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
+          style={{ maxHeight: 320, overflow: 'auto' }}
+        >
+          {requestText}
+        </pre>
+      </div>
+      <div style={{ width: '100%' }}>
+        <Space align='center' style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Title heading={4}>{t('响应体')}</Title>
+          <Space>
+            <Button
+              size='small'
+              type='tertiary'
+              onClick={async () => {
+                const ok = await copyToClipboard(responseText);
+                if (ok) {
+                  Toast.success(t('消息已复制到剪贴板'));
+                } else {
+                  Toast.error(t('无法复制到剪贴板，请手动复制'));
+                }
+              }}
+            >
+              {t('复制')}
+            </Button>
+            <Button size='small' type='tertiary' onClick={() => setWrapRes((v) => !v)}>
+              {wrapRes ? t('关闭换行') : t('开启换行')}
+            </Button>
+          </Space>
+        </Space>
+        <pre
+          className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrapRes ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
+          style={{ maxHeight: 320, overflow: 'auto' }}
+        >
+          {responseText}
+        </pre>
+      </div>
+    </Space>
+  );
+};
+
+const JsonNode = ({ label, value, t, depth = 0 }) => {
+  const [collapsed, setCollapsed] = useState(() => {
+    if (Array.isArray(value)) {
+      return value.length > 3;
+    }
+    if (value && typeof value === 'object') {
+      return Object.keys(value).length > 3;
+    }
+    return false;
+  });
+  const isComplex = Array.isArray(value) || (value && typeof value === 'object');
+  return (
+    <div className='w-full'>
+      <Space align='center' spacing={8} style={{ marginBottom: 8 }}>
+        {label !== undefined ? (
+          <Tag type='ghost' color='cyan'>{String(label)}</Tag>
+        ) : null}
+        {isComplex ? (
+          <Button size='small' type='tertiary' onClick={() => setCollapsed((v) => !v)}>
+            {collapsed ? t('展开') : t('收起')}
+          </Button>
+        ) : null}
+      </Space>
+      {isComplex ? (
+        collapsed ? null : (
+          Array.isArray(value) ? (
+            <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
+              {value.map((item, idx) => (
+                <div key={`idx-${idx}`} className='w-full'>
+                  <JsonNode label={idx} value={item} t={t} depth={depth + 1} />
+                </div>
+              ))}
+            </Space>
+          ) : (
+            <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
+              {Object.keys(value).map((k) => (
+                <div key={`key-${k}`} className='w-full'>
+                  <JsonNode label={k} value={value[k]} t={t} depth={depth + 1} />
+                </div>
+              ))}
+            </Space>
+          )
+        )
+      ) : (
+        <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+          {typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''}
+        </Paragraph>
+      )}
+    </div>
+  );
+};
+
+const JsonViewer = ({ data, t }) => {
+  if (data === undefined || data === null) {
+    return <Text type='tertiary'>{t('暂无数据')}</Text>;
+  }
+  return (
+    <div className='w-full rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] p-3'>
+      <JsonNode value={data} t={t} />
+    </div>
+  );
+};
+
+const AnchorNav = ({ t, anchors }) => {
+  const items = [
+    { key: 'params', label: t('请求参数'), ref: anchors?.paramsRef },
+    { key: 'req', label: t('请求消息'), ref: anchors?.reqMsgsRef },
+    { key: 'respOverview', label: t('响应概览'), ref: anchors?.respOverviewRef },
+    { key: 'resp', label: t('响应消息'), ref: anchors?.respMsgsRef },
+  ];
+  return (
+    <Space wrap spacing={8}>
+      {items.map((item) => (
+        <Button
+          key={item.key}
+          size='small'
+          type='tertiary'
+          onClick={() => item.ref?.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        >
+          {item.label}
+        </Button>
+      ))}
+    </Space>
+  );
+};
+
 const buildFormattedView = ({
   t,
   requestJson,
@@ -1177,6 +1554,7 @@ const buildFormattedView = ({
   responseMessages,
   responseUsage,
   onCopyMessage,
+  anchors,
 }) => {
   const renderMessageList = (
     messages,
@@ -1217,87 +1595,92 @@ const buildFormattedView = ({
   };
 
   return (
-    <Space vertical align='start' style={{ width: '100%' }}>
-      <Title heading={4}>{t('请求参数')}</Title>
-      <Descriptions
-        data={buildRequestParams(requestJson, t)}
-        size='small'
-        style={{ width: '100%' }}
-        emptyContent={t('无请求参数')}
-      />
-
-      <Divider margin='12px 0' />
-
-      <Title heading={4}>{t('请求消息')}</Title>
-      <Space
-        vertical
-        align='start'
-        style={{ width: '100%', gap: 12 }}
-      >
-        {renderMessageList(
-          requestMessages,
-          t('该请求没有消息内容'),
-          'request-msg',
-          'purple',
-          'rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2 w-full',
-        )}
-      </Space>
-
-      <Divider margin='12px 0' />
-
-      <Title heading={4}>{t('响应概览')}</Title>
-      <Descriptions
-        data={(() => {
-          const rows = [];
-          if (responseJson?.model) {
-            rows.push({ key: t('实际模型'), value: responseJson.model });
+    <div className='w-full flex flex-col gap-16'>
+      <div ref={anchors?.paramsRef} style={{ width: '100%' }}>
+        <Title heading={4}>{t('请求参数')}</Title>
+        <Descriptions
+          data={buildRequestParams(requestJson, t)}
+          size='small'
+          style={{ width: '100%' }}
+          emptyContent={t('无请求参数')}
+        />
+        {(() => {
+          const toolsRaw = requestJson?.tools;
+          if (!toolsRaw) {
+            return null;
           }
-          if (responseUsage) {
-            if (responseUsage.prompt_tokens !== undefined) {
-              rows.push({
-                key: t('提示Tokens'),
-                value: responseUsage.prompt_tokens,
-              });
-            }
-            if (responseUsage.completion_tokens !== undefined) {
-              rows.push({
-                key: t('补全Tokens'),
-                value: responseUsage.completion_tokens,
-              });
-            }
-            if (responseUsage.total_tokens !== undefined) {
-              rows.push({
-                key: t('总Tokens'),
-                value: responseUsage.total_tokens,
-              });
-            }
-          }
-          if (rows.length === 0) {
-            rows.push({ key: t('状态'), value: t('未提供响应统计信息') });
-          }
-          return rows;
+          return <ToolsSummary tools={toolsRaw} t={t} />;
         })()}
-        size='small'
-        style={{ width: '100%' }}
-      />
+      </div>
 
-      <Divider margin='12px 0' />
+      <div className='grid grid-cols-1 md:grid-cols-2 gap-16 w-full'>
+        <div className='flex flex-col gap-12' ref={anchors?.reqMsgsRef}>
+          <Title heading={4}>{t('请求消息')}</Title>
+          <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
+            {renderMessageList(
+              requestMessages,
+              t('该请求没有消息内容'),
+              'request-msg',
+              'purple',
+              'rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2 w-full',
+            )}
+          </Space>
+        </div>
 
-      <Title heading={4}>{t('响应消息')}</Title>
-      <Space
-        vertical
-        align='start'
-        style={{ width: '100%', gap: 12 }}
-      >
-        {renderMessageList(
-          responseMessages,
-          t('该响应没有消息内容'),
-          'response-msg',
-          'blue',
-          'rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-1)] px-3 py-2 w-full',
-        )}
-      </Space>
-    </Space>
+        <div className='flex flex-col gap-12'>
+          <div ref={anchors?.respOverviewRef}>
+            <Title heading={4}>{t('响应概览')}</Title>
+            <Descriptions
+              data={(() => {
+                const rows = [];
+                if (responseJson?.model) {
+                  rows.push({ key: t('实际模型'), value: responseJson.model });
+                }
+                if (responseUsage) {
+                  if (responseUsage.prompt_tokens !== undefined) {
+                    rows.push({
+                      key: t('提示Tokens'),
+                      value: responseUsage.prompt_tokens,
+                    });
+                  }
+                  if (responseUsage.completion_tokens !== undefined) {
+                    rows.push({
+                      key: t('补全Tokens'),
+                      value: responseUsage.completion_tokens,
+                    });
+                  }
+                  if (responseUsage.total_tokens !== undefined) {
+                    rows.push({
+                      key: t('总Tokens'),
+                      value: responseUsage.total_tokens,
+                    });
+                  }
+                }
+                if (rows.length === 0) {
+                  rows.push({ key: t('状态'), value: t('未提供响应统计信息') });
+                }
+                return rows;
+              })()}
+              size='small'
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <div ref={anchors?.respMsgsRef}>
+            <Title heading={4}>{t('响应消息')}</Title>
+            <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
+              {renderMessageList(
+                responseMessages,
+                t('该响应没有消息内容'),
+                'response-msg',
+                'blue',
+                'rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-1)] px-3 py-2 w-full',
+              )}
+            </Space>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -1332,6 +1715,11 @@ const UsageLogDetailDrawer = ({
     [responseJson, streamObjects],
   );
 
+  const paramsRef = useRef(null);
+  const reqMsgsRef = useRef(null);
+  const respOverviewRef = useRef(null);
+  const respMsgsRef = useRef(null);
+
   const handleCopyMessage = useCallback(
     async (message) => {
       const copyText = buildMessageCopyText(message, t);
@@ -1350,27 +1738,7 @@ const UsageLogDetailDrawer = ({
     [t],
   );
 
-  const formattedView = useMemo(
-    () =>
-      buildFormattedView({
-        t,
-        requestJson,
-        responseJson,
-        requestMessages,
-        responseMessages,
-        responseUsage,
-        onCopyMessage: handleCopyMessage,
-      }),
-    [
-      t,
-      requestJson,
-      responseJson,
-      requestMessages,
-      responseMessages,
-      responseUsage,
-      handleCopyMessage,
-    ],
-  );
+  const [activeTab, setActiveTab] = useState('params');
 
   const handleModeChange = (next) => {
     const value =
@@ -1384,14 +1752,29 @@ const UsageLogDetailDrawer = ({
     }
   };
 
+
   return (
     <SideSheet
       placement='right'
       visible={visible}
       onCancel={onClose}
-      width={520}
+      width={'clamp(360px, 92vw, 960px)'}
       maskClosable
-      title={t('请求详情')}
+      title={(
+        <div className='w-full flex items-center justify-between'>
+          <Title heading={4} style={{ margin: 0 }}>{t('请求详情')}</Title>
+          <RadioGroup
+            type='button'
+            buttonSize='small'
+            value={viewMode}
+            onChange={handleModeChange}
+            className='mr-4'
+          >
+            <Radio value='formatted'>{t('格式化视图')}</Radio>
+            <Radio value='raw'>{t('原始数据')}</Radio>
+          </RadioGroup>
+        </div>
+      )}
       className='usage-log-detail-drawer'
       closeIcon={
         <Button
@@ -1401,46 +1784,161 @@ const UsageLogDetailDrawer = ({
           onClick={onClose}
         />
       }
-      bodyStyle={{ padding: 24, height: '100%', overflow: 'auto' }}
+      bodyStyle={{ padding: '0 24px 16px 24px', height: '100%', overflow: 'auto' }}
     >
       <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
-        <RadioGroup
-          type='button'
-          buttonSize='small'
-          value={viewMode}
-          onChange={handleModeChange}
-        >
-          <Radio value='formatted'>{t('格式化视图')}</Radio>
-          <Radio value='raw'>{t('原始数据')}</Radio>
-        </RadioGroup>
-
         {viewMode === 'formatted' ? (
-          formattedView
-        ) : (
-          <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
-            <div style={{ width: '100%' }}>
-              <Title heading={4}>{t('请求体')}</Title>
-              <pre className='whitespace-pre-wrap break-all font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3'>
-                {formatJsonString(requestRaw) || t('暂无数据')}
-              </pre>
+          <>
+            <div className='sticky top-0 z-10 w-full'>
+              <Tabs
+                type='line'
+                activeKey={activeTab}
+                onChange={(key) => setActiveTab(key)}
+                className='w-full'
+                style={{ width: '100%' }}
+                tabBarStyle={{ background: 'var(--semi-color-bg-2)', padding: 0 }}
+              >
+                <Tabs.TabPane tab={t('请求参数')} itemKey='params' />
+                <Tabs.TabPane tab={t('请求消息')} itemKey='req' />
+                <Tabs.TabPane tab={t('响应概览')} itemKey='respOverview' />
+                <Tabs.TabPane tab={t('响应消息')} itemKey='resp' />
+              </Tabs>
             </div>
-            <div style={{ width: '100%' }}>
-              <Title heading={4}>{t('响应体')}</Title>
-              <pre className='whitespace-pre-wrap break-all font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3'>
+
+            {activeTab === 'params' && (
+              <div style={{ width: '100%' }}>
+                <ParamsGrid data={buildRequestParams(requestJson, t)} t={t} />
                 {(() => {
-                  if (responseJson) {
-                    return formatJsonString(responseRaw);
+                  const toolsRaw = requestJson?.tools;
+                  if (!toolsRaw) {
+                    return null;
                   }
-                  if (streamObjects.length > 0) {
-                    return streamObjects
-                      .map((obj) => JSON.stringify(obj, null, 2))
-                      .join('\n\n');
-                  }
-                  return responseRaw ? responseRaw.trim() : t('暂无数据');
+                  return (
+                    <div className='mt-6'>
+                      <ToolsSummary tools={toolsRaw} t={t} />
+                    </div>
+                  );
                 })()}
-              </pre>
-            </div>
-          </Space>
+              </div>
+            )}
+
+            {activeTab === 'req' && (
+              <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
+                {(() => {
+                  const messages = requestMessages;
+                  if (!messages || messages.length === 0) {
+                    return <Text type='tertiary'>{t('该请求没有消息内容')}</Text>;
+                  }
+                  return messages.map((message, index) => (
+                    <div
+                      key={`request-msg-${index}`}
+                      className='relative group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2 w-full'
+                    >
+                      <Space align='start' style={{ width: '100%', gap: 12 }}>
+                        <Tag type='ghost' color='purple'>
+                          {message.role}
+                        </Tag>
+                        <div style={{ flex: 1, width: '100%' }}>
+                          <MessageContent message={message} t={t} />
+                        </div>
+                      </Space>
+                      <Tooltip content={t('复制')}>
+                        <Button
+                          size='small'
+                          theme='borderless'
+                          icon={<IconCopy />}
+                          aria-label={t('复制')}
+                          className='absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity'
+                          onClick={() => handleCopyMessage(message)}
+                        />
+                      </Tooltip>
+                    </div>
+                  ));
+                })()}
+              </Space>
+            )}
+
+            {activeTab === 'respOverview' && (
+              <Descriptions
+                data={(() => {
+                  const rows = [];
+                  if (responseJson?.model) {
+                    rows.push({ key: t('实际模型'), value: responseJson.model });
+                  }
+                  if (responseUsage) {
+                    if (responseUsage.prompt_tokens !== undefined) {
+                      rows.push({
+                        key: t('提示Tokens'),
+                        value: responseUsage.prompt_tokens,
+                      });
+                    }
+                    if (responseUsage.completion_tokens !== undefined) {
+                      rows.push({
+                        key: t('补全Tokens'),
+                        value: responseUsage.completion_tokens,
+                      });
+                    }
+                    if (responseUsage.total_tokens !== undefined) {
+                      rows.push({
+                        key: t('总Tokens'),
+                        value: responseUsage.total_tokens,
+                      });
+                    }
+                  }
+                  if (rows.length === 0) {
+                    rows.push({ key: t('状态'), value: t('未提供响应统计信息') });
+                  }
+                  return rows;
+                })()}
+                size='small'
+                style={{ width: '100%' }}
+              />
+            )}
+
+            {activeTab === 'resp' && (
+              <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
+                {(() => {
+                  const messages = responseMessages;
+                  if (!messages || messages.length === 0) {
+                    return <Text type='tertiary'>{t('该响应没有消息内容')}</Text>;
+                  }
+                  return messages.map((message, index) => (
+                    <div
+                      key={`response-msg-${index}`}
+                      className='relative group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-1)] px-3 py-2 w-full'
+                    >
+                      <Space align='start' style={{ width: '100%', gap: 12 }}>
+                        <Tag type='ghost' color='blue'>
+                          {message.role}
+                        </Tag>
+                        <div style={{ flex: 1, width: '100%' }}>
+                          <MessageContent message={message} t={t} />
+                        </div>
+                      </Space>
+                      <Tooltip content={t('复制')}>
+                        <Button
+                          size='small'
+                          theme='borderless'
+                          icon={<IconCopy />}
+                          aria-label={t('复制')}
+                          className='absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity'
+                          onClick={() => handleCopyMessage(message)}
+                        />
+                      </Tooltip>
+                    </div>
+                  ));
+                })()}
+              </Space>
+            )}
+          </>
+        ) : (
+          <RawView
+            t={t}
+            requestRaw={requestRaw}
+            responseRaw={responseRaw}
+            responseJson={responseJson}
+            streamObjects={streamObjects}
+          />
         )}
       </Space>
     </SideSheet>
