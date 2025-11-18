@@ -1237,7 +1237,7 @@ const ParamsGrid = ({ data, t }) => {
     return <Text type='tertiary'>{t('无请求参数')}</Text>;
   }
   return (
-    <div className='grid grid-cols-1 md:grid-cols-3 gap-2 w-full'>
+    <div className='grid grid-cols-1 md:grid-cols-4 gap-2 w-full'>
       {items.map((row, index) => (
         <div
           key={`param-${index}`}
