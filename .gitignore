@@ -17,7 +17,10 @@ tiktoken_cache
 .eslintcache
 .gocache
 /.spec-workflow
+.cache
+web/bun.lock
 
 electron/node_modules
 electron/dist
 /.serena
+/.trae
