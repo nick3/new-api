@@ -209,7 +209,7 @@ func handleCozeEvent(c *gin.Context, event string, data string, responseText *st
 			return
 		}
 
-		common.SysLog(fmt.Sprintf("stream event error: %v %v", errorData.Code, errorData.Message))
+		common.SysLog(fmt.Sprintf("stream event error: code=%v message=%v", errorData.Code, errorData.Message))
 	}
 }
 
