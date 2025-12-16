@@ -118,10 +118,8 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
 	if info.IsStream {
 		return ClaudeStreamHandler(c, resp, info, a.RequestMode)
-	} else {
-		return ClaudeHandler(c, resp, info, a.RequestMode)
 	}
-	return
+	return ClaudeHandler(c, resp, info, a.RequestMode)
 }
 
 func (a *Adaptor) GetModelList() []string {

@@ -313,7 +313,11 @@ const createToolResultSegment = (result) => {
   }
   return {
     type: 'tool_result',
-    id: result.tool_use_id || result.toolUseId || result.id || result.tool_call_id,
+    id:
+      result.tool_use_id ||
+      result.toolUseId ||
+      result.id ||
+      result.tool_call_id,
     name: result.name || result.tool_name || result.toolName || 'tool',
     value: formatted,
   };
@@ -332,7 +336,9 @@ const segmentsToPlainText = (segments) => {
     return '';
   }
   return segments
-    .filter((segment) => segment.type === 'text' || segment.type === 'reasoning')
+    .filter(
+      (segment) => segment.type === 'text' || segment.type === 'reasoning',
+    )
     .map((segment) => segment.value)
     .join('\n');
 };
@@ -360,7 +366,8 @@ const copyToClipboard = async (text) => {
     document.body.appendChild(textarea);
 
     const selection = document.getSelection();
-    const selectedRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    const selectedRange =
+      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
 
     textarea.select();
     const succeeded = document.execCommand('copy');
@@ -383,7 +390,10 @@ const getSegmentCopyText = (segment, t) => {
     return '';
   }
 
-  const value = typeof segment.value === 'string' ? segment.value : String(segment.value ?? '');
+  const value =
+    typeof segment.value === 'string'
+      ? segment.value
+      : String(segment.value ?? '');
 
   switch (segment.type) {
     case 'reasoning':
@@ -467,7 +477,11 @@ const handleContentNode = (node, segments) => {
   if (node === undefined || node === null) {
     return;
   }
-  if (typeof node === 'string' || typeof node === 'number' || typeof node === 'boolean') {
+  if (
+    typeof node === 'string' ||
+    typeof node === 'number' ||
+    typeof node === 'boolean'
+  ) {
     addTextSegment(segments, String(node));
     return;
   }
@@ -494,7 +508,10 @@ const handleContentNode = (node, segments) => {
   }
 
   if (type === 'reasoning' || type === 'thinking' || node.thinking) {
-    addReasoningSegment(segments, node.text ?? node.reasoning ?? node.thinking ?? node.value);
+    addReasoningSegment(
+      segments,
+      node.text ?? node.reasoning ?? node.thinking ?? node.value,
+    );
     return;
   }
 
@@ -626,15 +643,14 @@ const aggregateOpenAIStreamChunks = (streamObjects) => {
     if (Array.isArray(delta.tool_calls)) {
       delta.tool_calls.forEach((toolDelta, index) => {
         const targetIndex = toolDelta.index ?? index;
-        const existing =
-          toolCalls[targetIndex] || {
-            id: toolDelta.id,
-            type: toolDelta.type,
-            function: {
-              name: toolDelta.function?.name || '',
-              arguments: '',
-            },
-          };
+        const existing = toolCalls[targetIndex] || {
+          id: toolDelta.id,
+          type: toolDelta.type,
+          function: {
+            name: toolDelta.function?.name || '',
+            arguments: '',
+          },
+        };
         if (toolDelta.id) {
           existing.id = toolDelta.id;
         }
@@ -673,6 +689,112 @@ const aggregateOpenAIStreamChunks = (streamObjects) => {
       }
       return call;
     });
+  }
+
+  return message;
+};
+
+const aggregateResponsesStreamEvents = (events) => {
+  if (!Array.isArray(events) || events.length === 0) {
+    return null;
+  }
+
+  const textByIndex = new Map();
+  let reasoning = '';
+
+  const appendIndexedText = (outputIndex, contentIndex, fragment) => {
+    const text = normaliseContent(fragment);
+    if (!text) {
+      return;
+    }
+    const key = `${outputIndex ?? 0}:${contentIndex ?? 0}`;
+    textByIndex.set(key, (textByIndex.get(key) || '') + text);
+  };
+
+  events.forEach((event) => {
+    if (!event || typeof event !== 'object') {
+      return;
+    }
+    const type = event.type;
+    if (typeof type !== 'string') {
+      return;
+    }
+
+    if (
+      type === 'response.output_text.delta' &&
+      typeof event.delta === 'string'
+    ) {
+      appendIndexedText(event.output_index, event.content_index, event.delta);
+      return;
+    }
+
+    if (type === 'response.output_text.done') {
+      const text = event.text ?? event.output_text;
+      if (typeof text === 'string') {
+        appendIndexedText(event.output_index, event.content_index, text);
+      }
+      return;
+    }
+
+    if (type.includes('reasoning') && typeof event.delta === 'string') {
+      reasoning += normaliseContent(event.delta);
+    }
+  });
+
+  const mergedText = Array.from(textByIndex.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, value]) => value)
+    .join('');
+
+  if (!mergedText.trim()) {
+    const lastResponseEvent = [...events]
+      .reverse()
+      .find((event) => event && typeof event === 'object' && event.response);
+    const response = lastResponseEvent?.response;
+    if (response && typeof response === 'object') {
+      const parts = [];
+      ensureArray(response.output).forEach((item) => {
+        if (!item) {
+          return;
+        }
+        if (item.content !== undefined) {
+          const text = normaliseContent(item.content);
+          if (text) {
+            parts.push(text);
+          }
+          return;
+        }
+        if (item.text !== undefined) {
+          const text = normaliseContent(item.text);
+          if (text) {
+            parts.push(text);
+          }
+        }
+      });
+
+      const combined = parts.join('');
+      if (combined.trim()) {
+        return {
+          role: response.role || 'assistant',
+          content: combined,
+          reasoning: reasoning.trim() ? reasoning : undefined,
+        };
+      }
+    }
+  }
+
+  if (!mergedText.trim() && !reasoning.trim()) {
+    return null;
+  }
+
+  const message = { role: 'assistant' };
+
+  if (mergedText.trim()) {
+    message.content = mergedText;
+  }
+
+  if (reasoning.trim()) {
+    message.reasoning = reasoning;
   }
 
   return message;
@@ -738,10 +860,12 @@ const aggregateClaudeStreamEvents = (events) => {
             break;
           case 'input_json_delta':
             block.partialJson =
-              (block.partialJson || '') + (delta.partial_json ?? delta.partialJson ?? '');
+              (block.partialJson || '') +
+              (delta.partial_json ?? delta.partialJson ?? '');
             break;
           case 'tool_use_delta':
-            block.partialJson = (block.partialJson || '') + (delta.arguments || '');
+            block.partialJson =
+              (block.partialJson || '') + (delta.arguments || '');
             break;
           default:
             if (delta.text) {
@@ -839,6 +963,15 @@ const buildMessageFromStreamObjects = (streamObjects) => {
     return aggregateOpenAIStreamChunks(streamObjects);
   }
 
+  if (
+    streamObjects.some(
+      (obj) =>
+        typeof obj?.type === 'string' && obj.type.startsWith('response.'),
+    )
+  ) {
+    return aggregateResponsesStreamEvents(streamObjects);
+  }
+
   if (streamObjects.some((obj) => typeof obj?.type === 'string')) {
     return aggregateClaudeStreamEvents(streamObjects);
   }
@@ -916,8 +1049,15 @@ const collectResponseUsage = (responseObject, streamObjects) => {
     return responseObject.usage;
   }
   if (Array.isArray(streamObjects)) {
-    const withUsage = [...streamObjects].reverse().find((obj) => obj.usage);
-    return withUsage?.usage ?? null;
+    const withUsage = [...streamObjects]
+      .reverse()
+      .find((obj) => obj?.usage || obj?.response?.usage);
+    if (withUsage?.usage) {
+      return withUsage.usage;
+    }
+    if (withUsage?.response?.usage) {
+      return withUsage.response.usage;
+    }
   }
   return null;
 };
@@ -932,10 +1072,7 @@ const collectResponseMessages = (responseObject, streamObjects) => {
     const message = buildMessageFromSource(source, fallbackRole);
     if (message.segments.length === 0 && !message.text) {
       const fallbackContent = normaliseContent(
-        source?.content ??
-          source?.text ??
-          source?.delta?.content ??
-          source,
+        source?.content ?? source?.text ?? source?.delta?.content ?? source,
       );
       if (fallbackContent && fallbackContent.trim()) {
         const fallbackSegment = createTextSegment(fallbackContent);
@@ -978,11 +1115,17 @@ const collectResponseMessages = (responseObject, streamObjects) => {
   }
 
   if (responseObject?.message) {
-    pushMessage(responseObject.message, responseObject.message.role || 'assistant');
+    pushMessage(
+      responseObject.message,
+      responseObject.message.role || 'assistant',
+    );
   }
 
   if (responseObject?.result) {
-    pushMessage(responseObject.result, responseObject.result.role || 'assistant');
+    pushMessage(
+      responseObject.result,
+      responseObject.result.role || 'assistant',
+    );
   }
 
   if (Array.isArray(responseObject?.messages)) {
@@ -993,14 +1136,20 @@ const collectResponseMessages = (responseObject, streamObjects) => {
 
   if (responseObject?.completion) {
     pushMessage(
-      { role: responseObject.role || 'assistant', content: responseObject.completion },
+      {
+        role: responseObject.role || 'assistant',
+        content: responseObject.completion,
+      },
       responseObject.role || 'assistant',
     );
   }
 
   if (responseObject?.reply) {
     pushMessage(
-      { role: responseObject.role || 'assistant', content: responseObject.reply },
+      {
+        role: responseObject.role || 'assistant',
+        content: responseObject.reply,
+      },
       responseObject.role || 'assistant',
     );
   }
@@ -1035,6 +1184,7 @@ const buildRequestParams = (requestObject, t) => {
   pushIfPresent(t('温度'), requestObject.temperature);
   pushIfPresent('top_p', requestObject.top_p);
   pushIfPresent(t('最大Tokens'), requestObject.max_tokens);
+  pushIfPresent('max_output_tokens', requestObject.max_output_tokens);
   pushIfPresent(t('响应格式'), requestObject.response_format);
   if (requestObject.tools) {
     let count = 0;
@@ -1151,12 +1301,12 @@ const ToolsSummary = ({ tools, t }) => {
       const type = Array.isArray(prop.type)
         ? prop.type.join('|')
         : typeof prop.type === 'string'
-        ? prop.type
-        : prop.enum
-        ? 'enum'
-        : prop.anyOf || prop.oneOf
-        ? 'union'
-        : 'any';
+          ? prop.type
+          : prop.enum
+            ? 'enum'
+            : prop.anyOf || prop.oneOf
+              ? 'union'
+              : 'any';
       return {
         key,
         type,
@@ -1166,13 +1316,15 @@ const ToolsSummary = ({ tools, t }) => {
     });
     const headerRight = (
       <Space wrap spacing={8} className='mr-2'>
-        {params.length > 0
-          ? params.map((p) => (
-              <Tag key={`param-pill-${index}-${p.key}`} type='ghost' color='blue'>
-                {p.key}
-              </Tag>
-            ))
-          : <Text type='tertiary'>{t('暂无参数')}</Text>}
+        {params.length > 0 ? (
+          params.map((p) => (
+            <Tag key={`param-pill-${index}-${p.key}`} type='ghost' color='blue'>
+              {p.key}
+            </Tag>
+          ))
+        ) : (
+          <Text type='tertiary'>{t('暂无参数')}</Text>
+        )}
       </Space>
     );
 
@@ -1193,9 +1345,19 @@ const ToolsSummary = ({ tools, t }) => {
         {params.length > 0 ? (
           <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
             {params.map((p) => (
-              <Space align='center' wrap spacing={8} key={`param-${name}-${p.key}`} style={{ width: '100%' }}>
-                <Tag type='ghost' color='blue'>{p.key}</Tag>
-                <Tag type='ghost' color='purple'>{p.type}</Tag>
+              <Space
+                align='center'
+                wrap
+                spacing={8}
+                key={`param-${name}-${p.key}`}
+                style={{ width: '100%' }}
+              >
+                <Tag type='ghost' color='blue'>
+                  {p.key}
+                </Tag>
+                <Tag type='ghost' color='purple'>
+                  {p.type}
+                </Tag>
                 <Tag type='ghost' color={p.required ? 'orange' : 'green'}>
                   {p.required ? t('必填') : t('可选')}
                 </Tag>
@@ -1288,7 +1450,9 @@ const MessageSegmentView = ({ segment, t }) => {
                 icon={<IconCopy />}
                 aria-label={t('复制')}
                 onClick={async () => {
-                  const ok = await copyToClipboard(getSegmentCopyText(segment, t));
+                  const ok = await copyToClipboard(
+                    getSegmentCopyText(segment, t),
+                  );
                   if (ok) {
                     Toast.success(t('消息已复制到剪贴板'));
                   } else {
@@ -1329,7 +1493,9 @@ const MessageSegmentView = ({ segment, t }) => {
                 icon={<IconCopy />}
                 aria-label={t('复制')}
                 onClick={async () => {
-                  const ok = await copyToClipboard(getSegmentCopyText(segment, t));
+                  const ok = await copyToClipboard(
+                    getSegmentCopyText(segment, t),
+                  );
                   if (ok) {
                     Toast.success(t('消息已复制到剪贴板'));
                   } else {
@@ -1374,13 +1540,23 @@ const MessageContent = ({ message, t }) => {
   return (
     <Space vertical align='start' style={{ width: '100%' }} spacing={12}>
       {segments.map((segment, index) => (
-        <MessageSegmentView key={`segment-${segment.type}-${index}`} segment={segment} t={t} />
+        <MessageSegmentView
+          key={`segment-${segment.type}-${index}`}
+          segment={segment}
+          t={t}
+        />
       ))}
     </Space>
   );
 };
 
-const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) => {
+const RawView = ({
+  t,
+  requestRaw,
+  responseRaw,
+  responseJson,
+  streamObjects,
+}) => {
   const [wrapReq, setWrapReq] = useState(true);
   const [wrapRes, setWrapRes] = useState(true);
   const requestText = formatJsonString(requestRaw) || t('暂无数据');
@@ -1389,7 +1565,9 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
       return formatJsonString(responseRaw);
     }
     if (Array.isArray(streamObjects) && streamObjects.length > 0) {
-      return streamObjects.map((obj) => JSON.stringify(obj, null, 2)).join('\n\n');
+      return streamObjects
+        .map((obj) => JSON.stringify(obj, null, 2))
+        .join('\n\n');
     }
     return responseRaw ? responseRaw.trim() : t('暂无数据');
   })();
@@ -1397,7 +1575,10 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
   return (
     <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
       <div style={{ width: '100%' }}>
-        <Space align='center' style={{ width: '100%', justifyContent: 'space-between' }}>
+        <Space
+          align='center'
+          style={{ width: '100%', justifyContent: 'space-between' }}
+        >
           <Title heading={4}>{t('请求体')}</Title>
           <Space>
             <Button
@@ -1414,7 +1595,11 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
             >
               {t('复制')}
             </Button>
-            <Button size='small' type='tertiary' onClick={() => setWrapReq((v) => !v)}>
+            <Button
+              size='small'
+              type='tertiary'
+              onClick={() => setWrapReq((v) => !v)}
+            >
               {wrapReq ? t('关闭换行') : t('开启换行')}
             </Button>
           </Space>
@@ -1427,7 +1612,10 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
         </pre>
       </div>
       <div style={{ width: '100%' }}>
-        <Space align='center' style={{ width: '100%', justifyContent: 'space-between' }}>
+        <Space
+          align='center'
+          style={{ width: '100%', justifyContent: 'space-between' }}
+        >
           <Title heading={4}>{t('响应体')}</Title>
           <Space>
             <Button
@@ -1444,7 +1632,11 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
             >
               {t('复制')}
             </Button>
-            <Button size='small' type='tertiary' onClick={() => setWrapRes((v) => !v)}>
+            <Button
+              size='small'
+              type='tertiary'
+              onClick={() => setWrapRes((v) => !v)}
+            >
               {wrapRes ? t('关闭换行') : t('开启换行')}
             </Button>
           </Space>
@@ -1470,42 +1662,51 @@ const JsonNode = ({ label, value, t, depth = 0 }) => {
     }
     return false;
   });
-  const isComplex = Array.isArray(value) || (value && typeof value === 'object');
+  const isComplex =
+    Array.isArray(value) || (value && typeof value === 'object');
   return (
     <div className='w-full'>
       <Space align='center' spacing={8} style={{ marginBottom: 8 }}>
         {label !== undefined ? (
-          <Tag type='ghost' color='cyan'>{String(label)}</Tag>
+          <Tag type='ghost' color='cyan'>
+            {String(label)}
+          </Tag>
         ) : null}
         {isComplex ? (
-          <Button size='small' type='tertiary' onClick={() => setCollapsed((v) => !v)}>
+          <Button
+            size='small'
+            type='tertiary'
+            onClick={() => setCollapsed((v) => !v)}
+          >
             {collapsed ? t('展开') : t('收起')}
           </Button>
         ) : null}
       </Space>
       {isComplex ? (
-        collapsed ? null : (
-          Array.isArray(value) ? (
-            <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
-              {value.map((item, idx) => (
-                <div key={`idx-${idx}`} className='w-full'>
-                  <JsonNode label={idx} value={item} t={t} depth={depth + 1} />
-                </div>
-              ))}
-            </Space>
-          ) : (
-            <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
-              {Object.keys(value).map((k) => (
-                <div key={`key-${k}`} className='w-full'>
-                  <JsonNode label={k} value={value[k]} t={t} depth={depth + 1} />
-                </div>
-              ))}
-            </Space>
-          )
+        collapsed ? null : Array.isArray(value) ? (
+          <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
+            {value.map((item, idx) => (
+              <div key={`idx-${idx}`} className='w-full'>
+                <JsonNode label={idx} value={item} t={t} depth={depth + 1} />
+              </div>
+            ))}
+          </Space>
+        ) : (
+          <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
+            {Object.keys(value).map((k) => (
+              <div key={`key-${k}`} className='w-full'>
+                <JsonNode label={k} value={value[k]} t={t} depth={depth + 1} />
+              </div>
+            ))}
+          </Space>
         )
       ) : (
         <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-          {typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''}
+          {typeof value === 'string'
+            ? value
+            : typeof value === 'number' || typeof value === 'boolean'
+              ? String(value)
+              : ''}
         </Paragraph>
       )}
     </div>
@@ -1527,7 +1728,11 @@ const AnchorNav = ({ t, anchors }) => {
   const items = [
     { key: 'params', label: t('请求参数'), ref: anchors?.paramsRef },
     { key: 'req', label: t('请求消息'), ref: anchors?.reqMsgsRef },
-    { key: 'respOverview', label: t('响应概览'), ref: anchors?.respOverviewRef },
+    {
+      key: 'respOverview',
+      label: t('响应概览'),
+      ref: anchors?.respOverviewRef,
+    },
     { key: 'resp', label: t('响应消息'), ref: anchors?.respMsgsRef },
   ];
   return (
@@ -1537,7 +1742,12 @@ const AnchorNav = ({ t, anchors }) => {
           key={item.key}
           size='small'
           type='tertiary'
-          onClick={() => item.ref?.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          onClick={() =>
+            item.ref?.current?.scrollIntoView({
+              behavior: 'smooth',
+              block: 'start',
+            })
+          }
         >
           {item.label}
         </Button>
@@ -1752,7 +1962,6 @@ const UsageLogDetailDrawer = ({
     }
   };
 
-
   return (
     <SideSheet
       placement='right'
@@ -1760,9 +1969,11 @@ const UsageLogDetailDrawer = ({
       onCancel={onClose}
       width={'clamp(360px, 92vw, 960px)'}
       maskClosable
-      title={(
+      title={
         <div className='w-full flex items-center justify-between'>
-          <Title heading={4} style={{ margin: 0 }}>{t('请求详情')}</Title>
+          <Title heading={4} style={{ margin: 0 }}>
+            {t('请求详情')}
+          </Title>
           <RadioGroup
             type='button'
             buttonSize='small'
@@ -1774,7 +1985,7 @@ const UsageLogDetailDrawer = ({
             <Radio value='raw'>{t('原始数据')}</Radio>
           </RadioGroup>
         </div>
-      )}
+      }
       className='usage-log-detail-drawer'
       closeIcon={
         <Button
@@ -1784,7 +1995,11 @@ const UsageLogDetailDrawer = ({
           onClick={onClose}
         />
       }
-      bodyStyle={{ padding: '0 24px 16px 24px', height: '100%', overflow: 'auto' }}
+      bodyStyle={{
+        padding: '0 24px 16px 24px',
+        height: '100%',
+        overflow: 'auto',
+      }}
     >
       <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
         {viewMode === 'formatted' ? (
@@ -1796,7 +2011,10 @@ const UsageLogDetailDrawer = ({
                 onChange={(key) => setActiveTab(key)}
                 className='w-full'
                 style={{ width: '100%' }}
-                tabBarStyle={{ background: 'var(--semi-color-bg-2)', padding: 0 }}
+                tabBarStyle={{
+                  background: 'var(--semi-color-bg-2)',
+                  padding: 0,
+                }}
               >
                 <Tabs.TabPane tab={t('请求参数')} itemKey='params' />
                 <Tabs.TabPane tab={t('请求消息')} itemKey='req' />
@@ -1827,7 +2045,9 @@ const UsageLogDetailDrawer = ({
                 {(() => {
                   const messages = requestMessages;
                   if (!messages || messages.length === 0) {
-                    return <Text type='tertiary'>{t('该请求没有消息内容')}</Text>;
+                    return (
+                      <Text type='tertiary'>{t('该请求没有消息内容')}</Text>
+                    );
                   }
                   return messages.map((message, index) => (
                     <div
@@ -1863,7 +2083,10 @@ const UsageLogDetailDrawer = ({
                 data={(() => {
                   const rows = [];
                   if (responseJson?.model) {
-                    rows.push({ key: t('实际模型'), value: responseJson.model });
+                    rows.push({
+                      key: t('实际模型'),
+                      value: responseJson.model,
+                    });
                   }
                   if (responseUsage) {
                     if (responseUsage.prompt_tokens !== undefined) {
@@ -1886,7 +2109,10 @@ const UsageLogDetailDrawer = ({
                     }
                   }
                   if (rows.length === 0) {
-                    rows.push({ key: t('状态'), value: t('未提供响应统计信息') });
+                    rows.push({
+                      key: t('状态'),
+                      value: t('未提供响应统计信息'),
+                    });
                   }
                   return rows;
                 })()}
@@ -1900,7 +2126,9 @@ const UsageLogDetailDrawer = ({
                 {(() => {
                   const messages = responseMessages;
                   if (!messages || messages.length === 0) {
-                    return <Text type='tertiary'>{t('该响应没有消息内容')}</Text>;
+                    return (
+                      <Text type='tertiary'>{t('该响应没有消息内容')}</Text>
+                    );
                   }
                   return messages.map((message, index) => (
                     <div
