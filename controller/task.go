@@ -88,7 +88,7 @@ func UpdateSunoTaskAll(ctx context.Context, taskChannelM map[int][]string, taskM
 	for channelId, taskIds := range taskChannelM {
 		err := updateSunoTaskAll(ctx, channelId, taskIds, taskM)
 		if err != nil {
-			logger.LogError(ctx, fmt.Sprintf("渠道 #%d 更新异步任务失败: %v", channelId, err))
+			logger.LogError(ctx, fmt.Sprintf("渠道 #%d 更新异步任务失败: %s", channelId, err.Error()))
 		}
 	}
 	return nil
