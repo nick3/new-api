@@ -794,24 +794,42 @@ const aggregateResponsesStreamEvents = (events) => {
       return;
     }
 
-    if (
-      type === 'response.output_text.delta' &&
-      typeof event.delta === 'string'
-    ) {
-      appendIndexedText(event.output_index, event.content_index, event.delta);
-      return;
-    }
-
-    if (type === 'response.output_text.done') {
-      const text = event.text ?? event.output_text;
-      if (typeof text === 'string') {
-        appendIndexedText(event.output_index, event.content_index, text);
+    if (type === 'response.output_text.delta') {
+      const fragment =
+        event.delta !== undefined
+          ? event.delta
+          : event.text !== undefined
+            ? event.text
+            : event.output_text;
+      if (fragment !== undefined) {
+        appendIndexedText(event.output_index, event.content_index, fragment);
       }
       return;
     }
 
-    if (type.includes('reasoning') && typeof event.delta === 'string') {
-      reasoning += normaliseContent(event.delta);
+    if (type === 'response.output_text.done') {
+      const fragment =
+        event.text !== undefined
+          ? event.text
+          : event.output_text !== undefined
+            ? event.output_text
+            : event.delta;
+      if (fragment !== undefined) {
+        appendIndexedText(event.output_index, event.content_index, fragment);
+      }
+      return;
+    }
+
+    if (type.includes('reasoning')) {
+      const fragment =
+        event.delta !== undefined
+          ? event.delta
+          : event.text !== undefined
+            ? event.text
+            : event.reasoning_text;
+      if (fragment !== undefined) {
+        reasoning += normaliseContent(fragment);
+      }
     }
   });
 
@@ -847,10 +865,18 @@ const aggregateResponsesStreamEvents = (events) => {
       });
 
       const combined = parts.join('');
-      if (combined.trim()) {
+      const fallbackText = normaliseContent(
+        response.output_text ??
+          response.outputText ??
+          response.text ??
+          response.content ??
+          response.output_texts,
+      );
+      const messageText = combined.trim() ? combined : fallbackText;
+      if (messageText && messageText.trim()) {
         return {
           role: response.role || 'assistant',
-          content: combined,
+          content: messageText,
           reasoning: reasoning.trim() ? reasoning : undefined,
         };
       }
@@ -1174,6 +1200,16 @@ const collectResponseMessages = (responseObject, streamObjects) => {
     });
   }
 
+  if (Array.isArray(responseObject)) {
+    responseObject.forEach((item) => {
+      if (!item) {
+        return;
+      }
+      const role = item.role || responseObject.role || 'assistant';
+      pushMessage({ ...item, role }, role);
+    });
+  }
+
   if (responseObject?.content !== undefined) {
     pushMessage(responseObject, responseObject.role || 'assistant');
   }
@@ -1186,6 +1222,20 @@ const collectResponseMessages = (responseObject, streamObjects) => {
       const role = item.role || responseObject.role || 'assistant';
       pushMessage({ ...item, role }, role);
     });
+  }
+
+  if (
+    messages.length === 0 &&
+    (responseObject?.output_text !== undefined ||
+      responseObject?.outputText !== undefined)
+  ) {
+    pushMessage(
+      {
+        role: responseObject?.role || 'assistant',
+        content: responseObject?.output_text ?? responseObject?.outputText,
+      },
+      responseObject?.role || 'assistant',
+    );
   }
 
   if (responseObject?.message) {
@@ -1989,12 +2039,39 @@ const UsageLogDetailDrawer = ({
     if (responseJson && isSingleStreamObject) {
       return [responseJson];
     }
+    if (Array.isArray(responseJson)) {
+      const candidates = responseJson.filter((item) => looksLikeStreamObject(item));
+      if (candidates.length > 0) {
+        return candidates;
+      }
+      const nestedCandidates = responseJson
+        .map((item) => item?.events ?? item?.data ?? item?.chunks)
+        .find((value) => Array.isArray(value) && value.some(looksLikeStreamObject));
+      if (Array.isArray(nestedCandidates)) {
+        return nestedCandidates.filter(Boolean);
+      }
+    }
+    if (responseJson && typeof responseJson === 'object') {
+      const container =
+        responseJson.events ?? responseJson.data ?? responseJson.chunks;
+      if (Array.isArray(container) && container.some(looksLikeStreamObject)) {
+        return container.filter(Boolean);
+      }
+    }
     if (!responseJson) {
       return splitStreamingResponse(responseRaw);
     }
     return [];
   }, [isSingleStreamObject, responseJson, responseRaw]);
-  const effectiveResponseJson = isSingleStreamObject ? null : responseJson;
+  const effectiveResponseJson = useMemo(() => {
+    if (isSingleStreamObject) {
+      return null;
+    }
+    if (Array.isArray(streamObjects) && streamObjects.length > 0) {
+      return null;
+    }
+    return responseJson;
+  }, [isSingleStreamObject, responseJson, streamObjects]);
 
   const requestMessages = useMemo(
     () => collectRequestMessages(requestJson),
