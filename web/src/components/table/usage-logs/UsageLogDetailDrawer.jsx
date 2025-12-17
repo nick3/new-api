@@ -112,6 +112,55 @@ const splitStreamingResponse = (raw) => {
     }
   });
 
+  if (sseObjects.length === 0) {
+    // Fallback: tolerate SSE logs that contain `data:` lines but are not separated by blank lines.
+    const lines = trimmed.split(/\r?\n/);
+    let dataBuffer = '';
+    const flushBuffer = () => {
+      const candidate = dataBuffer.trim();
+      dataBuffer = '';
+      if (!candidate || candidate === '[DONE]') {
+        return;
+      }
+      const parsed = safeParseJson(candidate);
+      if (parsed) {
+        sseObjects.push(parsed);
+      }
+    };
+
+    lines.forEach((line) => {
+      const current = typeof line === 'string' ? line.trim() : '';
+      if (!current) {
+        flushBuffer();
+        return;
+      }
+      if (!current.startsWith('data:')) {
+        return;
+      }
+      const payload = current.slice(5).trim();
+      if (!payload) {
+        return;
+      }
+      if (!dataBuffer) {
+        const parsed = safeParseJson(payload);
+        if (parsed) {
+          sseObjects.push(parsed);
+          return;
+        }
+        dataBuffer = payload;
+        return;
+      }
+
+      dataBuffer += payload;
+      const parsed = safeParseJson(dataBuffer);
+      if (parsed) {
+        sseObjects.push(parsed);
+        dataBuffer = '';
+      }
+    });
+    flushBuffer();
+  }
+
   if (sseObjects.length > 0) {
     // For OpenAI-style streaming responses, return the original array
     // This will be processed by aggregateOpenAIStreamChunks later
@@ -163,6 +212,31 @@ const splitStreamingResponse = (raw) => {
   }
 
   return objects;
+};
+
+const looksLikeStreamObject = (obj) => {
+  if (!obj || typeof obj !== 'object') {
+    return false;
+  }
+  if (typeof obj.type === 'string') {
+    if (obj.type.startsWith('response.')) {
+      return true;
+    }
+    if (
+      obj.type.startsWith('message_') ||
+      obj.type.startsWith('content_block_') ||
+      obj.type.startsWith('input_json_')
+    ) {
+      return true;
+    }
+  }
+  if (obj.object === 'chat.completion.chunk') {
+    return true;
+  }
+  if (Array.isArray(obj.choices) && obj.choices.some((c) => c?.delta)) {
+    return true;
+  }
+  return false;
 };
 
 const normaliseContent = (content) => {
@@ -1907,22 +1981,32 @@ const UsageLogDetailDrawer = ({
 
   const requestJson = useMemo(() => safeParseJson(requestRaw), [requestRaw]);
   const responseJson = useMemo(() => safeParseJson(responseRaw), [responseRaw]);
-  const streamObjects = useMemo(
-    () => (!responseJson ? splitStreamingResponse(responseRaw) : []),
-    [responseJson, responseRaw],
+  const isSingleStreamObject = useMemo(
+    () => looksLikeStreamObject(responseJson),
+    [responseJson],
   );
+  const streamObjects = useMemo(() => {
+    if (responseJson && isSingleStreamObject) {
+      return [responseJson];
+    }
+    if (!responseJson) {
+      return splitStreamingResponse(responseRaw);
+    }
+    return [];
+  }, [isSingleStreamObject, responseJson, responseRaw]);
+  const effectiveResponseJson = isSingleStreamObject ? null : responseJson;
 
   const requestMessages = useMemo(
     () => collectRequestMessages(requestJson),
     [requestJson],
   );
   const responseMessages = useMemo(
-    () => collectResponseMessages(responseJson, streamObjects),
-    [responseJson, streamObjects],
+    () => collectResponseMessages(effectiveResponseJson, streamObjects),
+    [effectiveResponseJson, streamObjects],
   );
   const responseUsage = useMemo(
-    () => collectResponseUsage(responseJson, streamObjects),
-    [responseJson, streamObjects],
+    () => collectResponseUsage(effectiveResponseJson, streamObjects),
+    [effectiveResponseJson, streamObjects],
   );
 
   const paramsRef = useRef(null);
