@@ -774,7 +774,10 @@ const aggregateResponsesStreamEvents = (events) => {
   }
 
   const textByIndex = new Map();
+  const outputItemsByIndex = new Map();
+  const functionCallArgsByKey = new Map();
   let reasoning = '';
+  let latestResponse = null;
 
   const appendIndexedText = (outputIndex, contentIndex, fragment) => {
     const text = normaliseContent(fragment);
@@ -785,12 +788,171 @@ const aggregateResponsesStreamEvents = (events) => {
     textByIndex.set(key, (textByIndex.get(key) || '') + text);
   };
 
+  const getFunctionCallKeys = (event) => {
+    if (!event || typeof event !== 'object') {
+      return ['output_index:0'];
+    }
+    const keys = [];
+    const id =
+      event.item_id ??
+      event.itemId ??
+      event.id ??
+      event.tool_call_id ??
+      event.toolCallId;
+    if (id !== undefined && id !== null && String(id).trim()) {
+      keys.push(String(id));
+    }
+    const outputIndex = event.output_index ?? event.outputIndex;
+    keys.push(`output_index:${outputIndex ?? 0}`);
+    return Array.from(new Set(keys));
+  };
+
+  const appendFunctionCallArgs = (key, fragment) => {
+    if (!key || typeof fragment !== 'string') {
+      return;
+    }
+    functionCallArgsByKey.set(key, (functionCallArgsByKey.get(key) || '') + fragment);
+  };
+
+  const upsertOutputItem = (outputIndexRaw, item) => {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+    const outputIndex =
+      outputIndexRaw ??
+      item.output_index ??
+      item.outputIndex ??
+      item.output_item_index ??
+      item.outputItemIndex;
+    const indexKey = outputIndex ?? outputItemsByIndex.size;
+    const existing = outputItemsByIndex.get(indexKey);
+    const merged = existing ? { ...existing, ...item } : { ...item };
+    if (outputIndex !== undefined && outputIndex !== null) {
+      merged.output_index = outputIndex;
+    }
+    outputItemsByIndex.set(indexKey, merged);
+  };
+
+  const pickLongerString = (a, b) => {
+    const left = typeof a === 'string' ? a : '';
+    const right = typeof b === 'string' ? b : '';
+    return right.length > left.length ? right : left;
+  };
+
+  const patchFunctionCallArguments = (item, fallbackOutputIndex) => {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+
+    const outputIndex =
+      item.output_index ?? item.outputIndex ?? fallbackOutputIndex ?? 0;
+    const id =
+      item.id ??
+      item.item_id ??
+      item.itemId ??
+      item.tool_call_id ??
+      item.toolCallId;
+
+    const keys = [];
+    if (id !== undefined && id !== null) {
+      keys.push(String(id));
+    }
+    keys.push(`output_index:${outputIndex}`);
+
+    const collected = keys
+      .map((key) => functionCallArgsByKey.get(key))
+      .find((value) => typeof value === 'string' && value.length > 0);
+    if (!collected) {
+      return item;
+    }
+
+    const existingArgs =
+      item.arguments ??
+      item.input_json ??
+      item.input ??
+      item.function?.arguments ??
+      item.parameters;
+    const best = pickLongerString(existingArgs, collected);
+
+    if (best === existingArgs) {
+      return item;
+    }
+
+    if (item.function && typeof item.function === 'object') {
+      return {
+        ...item,
+        function: {
+          ...item.function,
+          arguments: best,
+        },
+      };
+    }
+
+    return {
+      ...item,
+      arguments: best,
+    };
+  };
+
   events.forEach((event) => {
     if (!event || typeof event !== 'object') {
       return;
     }
     const type = event.type;
     if (typeof type !== 'string') {
+      return;
+    }
+
+    if (event.response && typeof event.response === 'object') {
+      latestResponse = event.response;
+    }
+
+    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+      const outputIndex =
+        event.output_index ??
+        event.outputIndex ??
+        event.item?.output_index ??
+        event.item?.outputIndex;
+      const item =
+        event.item ?? event.output_item ?? event.outputItem ?? event.output;
+      upsertOutputItem(outputIndex, item);
+    }
+
+    if (
+      type === 'response.function_call_arguments.delta' ||
+      type === 'response.tool_call_arguments.delta'
+    ) {
+      const fragment =
+        typeof event.delta === 'string'
+          ? event.delta
+          : typeof event.arguments_delta === 'string'
+            ? event.arguments_delta
+            : typeof event.argumentsDelta === 'string'
+              ? event.argumentsDelta
+              : undefined;
+      if (fragment !== undefined) {
+        getFunctionCallKeys(event).forEach((key) =>
+          appendFunctionCallArgs(key, fragment),
+        );
+      }
+      return;
+    }
+
+    if (
+      type === 'response.function_call_arguments.done' ||
+      type === 'response.tool_call_arguments.done'
+    ) {
+      const full =
+        typeof event.arguments === 'string'
+          ? event.arguments
+          : typeof event.delta === 'string'
+            ? event.delta
+            : undefined;
+      if (full !== undefined) {
+        getFunctionCallKeys(event).forEach((key) =>
+          functionCallArgsByKey.set(key, full),
+        );
+      }
       return;
     }
 
@@ -838,48 +1000,87 @@ const aggregateResponsesStreamEvents = (events) => {
     .map(([, value]) => value)
     .join('');
 
-  if (!mergedText.trim()) {
-    const lastResponseEvent = [...events]
-      .reverse()
-      .find((event) => event && typeof event === 'object' && event.response);
-    const response = lastResponseEvent?.response;
-    if (response && typeof response === 'object') {
-      const parts = [];
-      ensureArray(response.output).forEach((item) => {
-        if (!item) {
-          return;
-        }
-        if (item.content !== undefined) {
-          const text = normaliseContent(item.content);
-          if (text) {
-            parts.push(text);
-          }
-          return;
-        }
-        if (item.text !== undefined) {
-          const text = normaliseContent(item.text);
-          if (text) {
-            parts.push(text);
-          }
-        }
-      });
+  const responseOutput = Array.isArray(latestResponse?.output)
+    ? latestResponse.output
+    : [];
+  const outputFromResponse = responseOutput.length > 0;
+  const outputFromEvents = Array.from(outputItemsByIndex.entries())
+    .sort((a, b) => {
+      const left = typeof a[0] === 'number' ? a[0] : Number(String(a[0]));
+      const right = typeof b[0] === 'number' ? b[0] : Number(String(b[0]));
+      const safeLeft = Number.isFinite(left) ? left : 0;
+      const safeRight = Number.isFinite(right) ? right : 0;
+      return safeLeft - safeRight;
+    })
+    .map(([, item]) => item)
+    .filter(Boolean);
+  const baseOutput = outputFromResponse ? responseOutput : outputFromEvents;
+  const patchedOutput = ensureArray(baseOutput)
+    .filter(Boolean)
+    .map((item, index) => patchFunctionCallArguments(item, index));
 
-      const combined = parts.join('');
-      const fallbackText = normaliseContent(
-        response.output_text ??
-          response.outputText ??
-          response.text ??
-          response.content ??
-          response.output_texts,
-      );
-      const messageText = combined.trim() ? combined : fallbackText;
-      if (messageText && messageText.trim()) {
-        return {
-          role: response.role || 'assistant',
-          content: messageText,
-          reasoning: reasoning.trim() ? reasoning : undefined,
-        };
-      }
+  const syntheticOutput =
+    patchedOutput.length > 0
+      ? []
+      : Array.from(functionCallArgsByKey.entries())
+          .filter(
+            ([key, value]) =>
+              typeof key === 'string' &&
+              key.startsWith('output_index:') &&
+              typeof value === 'string' &&
+              value.trim(),
+          )
+          .sort((a, b) => {
+            const left = Number(a[0].slice('output_index:'.length));
+            const right = Number(b[0].slice('output_index:'.length));
+            const safeLeft = Number.isFinite(left) ? left : 0;
+            const safeRight = Number.isFinite(right) ? right : 0;
+            return safeLeft - safeRight;
+          })
+          .map(([key, value]) => {
+            const outputIndex = Number(key.slice('output_index:'.length));
+            return {
+              type: 'function_call',
+              output_index: Number.isFinite(outputIndex) ? outputIndex : undefined,
+              name: 'function_call',
+              arguments: value,
+            };
+          });
+  const effectiveOutput = patchedOutput.length > 0 ? patchedOutput : syntheticOutput;
+
+  if (effectiveOutput.length > 0) {
+    const message = {
+      role: latestResponse?.role || 'assistant',
+      output: effectiveOutput,
+    };
+    if (!outputFromResponse && mergedText.trim()) {
+      message.content = mergedText;
+    }
+    if (reasoning.trim()) {
+      message.reasoning = reasoning;
+    }
+    return message;
+  }
+
+  if (!mergedText.trim()) {
+    const responseTextSource =
+      latestResponse?.output_text ?? latestResponse?.outputText;
+    const fallbackText =
+      responseTextSource !== undefined
+        ? normaliseContent(responseTextSource)
+        : typeof latestResponse?.text === 'string'
+          ? normaliseContent(latestResponse.text)
+          : latestResponse?.content !== undefined
+            ? normaliseContent(latestResponse.content)
+            : latestResponse?.output_texts !== undefined
+              ? normaliseContent(latestResponse.output_texts)
+              : '';
+    if (fallbackText && typeof fallbackText === 'string' && fallbackText.trim()) {
+      return {
+        role: latestResponse?.role || 'assistant',
+        content: fallbackText,
+        reasoning: reasoning.trim() ? reasoning : undefined,
+      };
     }
   }
 
