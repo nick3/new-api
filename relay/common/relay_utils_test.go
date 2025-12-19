@@ -1,5 +1,4 @@
 package common
-package common
 
 import (
 	"testing"
@@ -17,6 +16,13 @@ func TestGetFullRequestURL_OpenAIBaseURLPathHandling(t *testing.T) {
 		channelType int
 		expected   string
 	}{
+		{
+			name:        "cloudflare gateway is handled first (openai)",
+			baseURL:     "https://gateway.ai.cloudflare.com/account/gateway/openai",
+			requestURL:  "/v1/chat/completions",
+			channelType: constant.ChannelTypeOpenAI,
+			expected:    "https://gateway.ai.cloudflare.com/account/gateway/openai/chat/completions",
+		},
 		{
 			name:        "openai baseURL no path keeps /v1",
 			baseURL:     "https://api.openai.com",
