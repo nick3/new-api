@@ -2461,6 +2461,8 @@
     "此项可选，用于覆盖请求参数。不支持覆盖 stream 参数": "Tùy chọn, được sử dụng để ghi đè tham số yêu cầu. Không hỗ trợ ghi đè tham số stream.",
     "此项可选，用于覆盖请求头参数": "Tùy chọn, được sử dụng để ghi đè tham số tiêu đề yêu cầu.",
     "此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/": "Tùy chọn cho các cuộc gọi API thông qua địa chỉ API tùy chỉnh, không thêm /v1 và / ở cuối",
+    "此项可选，用于通过自定义API地址来进行 API 调用（末尾 / 会自动忽略）": "Tùy chọn: dùng Base URL tùy chỉnh để gọi API (dấu / ở cuối sẽ được bỏ qua)",
+    "OpenAI 类型：若 API 地址包含路径（例如 /v2 或 /v1），系统将不再自动拼接 /v1；若上游仍需要 /v1，请在地址中显式包含 /v1。使用 Cloudflare AI Gateway（gateway.ai.cloudflare.com）时也无需额外添加 /v1。": "OpenAI: nếu Base URL có chứa đường dẫn (ví dụ /v2 hoặc /v1), hệ thống sẽ KHÔNG tự động thêm /v1. Nếu upstream vẫn yêu cầu /v1, hãy thêm /v1 trực tiếp vào Base URL. Với Cloudflare AI Gateway (gateway.ai.cloudflare.com) cũng không cần thêm /v1.",
     "每隔多少分钟测试一次所有通道": "Bao nhiêu phút kiểm tra tất cả các kênh một lần",
     "永不过期": "Không bao giờ hết hạn",
     "永久删除您的两步验证设置": "Xóa vĩnh viễn cài đặt xác thực hai yếu tố của bạn",

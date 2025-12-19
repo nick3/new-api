@@ -1287,6 +1287,8 @@
     "此项可选，用于覆盖请求参数。不支持覆盖 stream 参数": "Ceci est facultatif, utilisé pour remplacer les paramètres de requête. Ne prend pas en charge le remplacement du paramètre stream",
     "此项可选，用于覆盖请求头参数": "Ceci est facultatif, utilisé pour remplacer les paramètres d'en-tête de requête",
     "此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/": "Facultatif pour les appels d'API via une adresse d'API personnalisée, n'ajoutez pas /v1 et / à la fin",
+    "此项可选，用于通过自定义API地址来进行 API 调用（末尾 / 会自动忽略）": "Optionnel : utiliser une URL de base personnalisée pour les appels d'API (un / final sera ignoré)",
+    "OpenAI 类型：若 API 地址包含路径（例如 /v2 或 /v1），系统将不再自动拼接 /v1；若上游仍需要 /v1，请在地址中显式包含 /v1。使用 Cloudflare AI Gateway（gateway.ai.cloudflare.com）时也无需额外添加 /v1。": "OpenAI : si l’URL de base contient un chemin (ex. /v2 ou /v1), le système n’ajoute PAS automatiquement /v1. Si votre amont nécessite toujours /v1, incluez /v1 dans l’URL de base. Pour Cloudflare AI Gateway (gateway.ai.cloudflare.com), il n’est pas nécessaire d’ajouter /v1 non plus.",
     "每隔多少分钟测试一次所有通道": "Tous les combien de minutes tester tous les canaux",
     "永不过期": "N'expire jamais",
     "永久删除您的两步验证设置": "Supprimer définitivement vos paramètres d'authentification à deux facteurs",

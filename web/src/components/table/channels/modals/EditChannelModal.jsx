@@ -411,18 +411,6 @@ const EditChannelModal = (props) => {
     if (name === 'models' && Array.isArray(value)) {
       value = Array.from(new Set(value.map((m) => (m || '').trim())));
     }
-
-    if (name === 'base_url' && value.endsWith('/v1')) {
-      Modal.confirm({
-        title: '警告',
-        content:
-          '不需要在末尾加/v1，New API会自动处理，添加后可能导致请求失败，是否继续？',
-        onOk: () => {
-          setInputs((inputs) => ({ ...inputs, [name]: value }));
-        },
-      });
-      return;
-    }
     setInputs((inputs) => ({ ...inputs, [name]: value }));
     if (name === 'type') {
       let localModels = [];
@@ -2288,15 +2276,32 @@ const EditChannelModal = (props) => {
                               field='base_url'
                               label={t('API地址')}
                               placeholder={t(
-                                '此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/',
+                                '此项可选，用于通过自定义API地址来进行 API 调用（末尾 / 会自动忽略）',
                               )}
                               onChange={(value) =>
                                 handleInputChange('base_url', value)
                               }
                               showClear
-                              extraText={t(
-                                '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
-                              )}
+                              extraText={
+                                inputs.type === 1 ? (
+                                  <div className='space-y-1'>
+                                    <div>
+                                      {t(
+                                        '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
+                                      )}
+                                    </div>
+                                    <div>
+                                      {t(
+                                        'OpenAI 类型：若 API 地址包含路径（例如 /v2 或 /v1），系统将不再自动拼接 /v1；若上游仍需要 /v1，请在地址中显式包含 /v1。使用 Cloudflare AI Gateway（gateway.ai.cloudflare.com）时也无需额外添加 /v1。',
+                                      )}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  t(
+                                    '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
+                                  )
+                                )
+                              }
                             />
                           </div>
                         )}

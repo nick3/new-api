@@ -1279,6 +1279,8 @@
     "此项可选，用于覆盖请求参数。不支持覆盖 stream 参数": "This is optional, used to override request parameters. Overriding stream parameter is not supported.",
     "此项可选，用于覆盖请求头参数": "This is optional, used to override request header parameters.",
     "此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/": "Optional for API calls through custom API address, do not add /v1 and / at the end",
+    "此项可选，用于通过自定义API地址来进行 API 调用（末尾 / 会自动忽略）": "Optional: use a custom Base URL for API calls (a trailing / will be ignored)",
+    "OpenAI 类型：若 API 地址包含路径（例如 /v2 或 /v1），系统将不再自动拼接 /v1；若上游仍需要 /v1，请在地址中显式包含 /v1。使用 Cloudflare AI Gateway（gateway.ai.cloudflare.com）时也无需额外添加 /v1。": "OpenAI: if the Base URL includes a path (e.g. /v2 or /v1), the system will NOT auto-append /v1. If your upstream still requires /v1, include /v1 in the Base URL. For Cloudflare AI Gateway (gateway.ai.cloudflare.com), you also don't need to add /v1.",
     "每隔多少分钟测试一次所有通道": "How many minutes between testing all channels",
     "永不过期": "Never expires",
     "永久删除您的两步验证设置": "Permanently delete your two-factor authentication settings",
