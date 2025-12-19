@@ -12,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
+
+	"net/url"
 )
 
 type HasPrompt interface {
@@ -23,6 +25,18 @@ type HasImage interface {
 }
 
 func GetFullRequestURL(baseURL string, requestURL string, channelType int) string {
+	// 统一去掉 baseURL 末尾的 /，避免拼接时出现 //
+	baseURL = strings.TrimSuffix(baseURL, "/")
+
+	// OpenAI 渠道：当 baseURL 本身包含 path（例如 https://api.openai.com/v2）时，
+	// requestURL 不应再携带默认的 /v1 前缀，否则会变成 .../v2/v1/...。
+	if channelType == constant.ChannelTypeOpenAI {
+		u, err := url.Parse(baseURL)
+		if err == nil && u.Scheme != "" && u.Host != "" && u.Path != "" && u.Path != "/" {
+			return fmt.Sprintf("%s%s", baseURL, strings.TrimPrefix(requestURL, "/v1"))
+		}
+	}
+
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
 
 	if strings.HasPrefix(baseURL, "https://gateway.ai.cloudflare.com") {
