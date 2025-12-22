@@ -17,6 +17,7 @@ tiktoken_cache
 .eslintcache
 .gocache
 /.spec-workflow
+.gomodcache/
 .cache
 web/bun.lock
 
