@@ -26,3 +26,4 @@ electron/dist
 /.serena
 /.trae
 data/
+.gomodcache/
