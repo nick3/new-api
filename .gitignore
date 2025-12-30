@@ -27,3 +27,5 @@ electron/dist
 /.trae
 data/
 .gomodcache/
+.gocache-temp
+.gopath
