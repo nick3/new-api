@@ -29,6 +29,7 @@ var defaultPassThroughHeaderDenySet = map[string]struct{}{
 	"authorization":       {},
 	"api-key":             {},
 	"x-api-key":           {},
+	"cookie":              {},
 	"connection":          {},
 	"keep-alive":          {},
 	"proxy-authenticate":  {},
@@ -410,7 +411,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headers := req.Header
-	applyPassThroughRequestHeadersIfEnabled(c, info, headers, nil)
+	applyPassThroughRequestHeadersIfEnabled(c, info, headers, []string{"Content-Type"})
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
