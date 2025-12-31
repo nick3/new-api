@@ -15,15 +15,28 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func FlushWriter(c *gin.Context) error {
-	if c.Writer == nil {
+func FlushWriter(c *gin.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("flush panic recovered: %v", r)
+		}
+	}()
+
+	if c == nil || c.Writer == nil {
 		return nil
 	}
-	if flusher, ok := c.Writer.(http.Flusher); ok {
-		flusher.Flush()
-		return nil
+
+	if c.Request != nil && c.Request.Context().Err() != nil {
+		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
-	return errors.New("streaming error: flusher not found")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		return errors.New("streaming error: flusher not found")
+	}
+
+	flusher.Flush()
+	return nil
 }
 
 func SetEventStreamHeaders(c *gin.Context) {
@@ -63,24 +76,40 @@ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) {
+	common.AppendPayloadChunkForLog(c, constant.ContextKeyLoggedResponseBody, data)
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
 	_ = FlushWriter(c)
 }
 
 func StringData(c *gin.Context, str string) error {
-	//str = strings.TrimPrefix(str, "data: ")
-	//str = strings.TrimSuffix(str, "\r")
+	if c == nil || c.Writer == nil {
+		return errors.New("context or writer is nil")
+	}
+
+	if c.Request != nil && c.Request.Context().Err() != nil {
+		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+	}
+
 	common.AppendPayloadChunkForLog(c, constant.ContextKeyLoggedResponseBody, str)
+
 	c.Render(-1, common.CustomEvent{Data: "data: " + str})
-	_ = FlushWriter(c)
-	return nil
+	return FlushWriter(c)
 }
 
 func PingData(c *gin.Context) error {
-	c.Writer.Write([]byte(": PING\n\n"))
-	_ = FlushWriter(c)
-	return nil
+	if c == nil || c.Writer == nil {
+		return errors.New("context or writer is nil")
+	}
+
+	if c.Request != nil && c.Request.Context().Err() != nil {
+		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+	}
+
+	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
+		return fmt.Errorf("write ping data failed: %w", err)
+	}
+	return FlushWriter(c)
 }
 
 func ObjectData(c *gin.Context, object interface{}) error {

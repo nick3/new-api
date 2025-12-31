@@ -483,9 +483,11 @@ func StreamResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse
 				}
 			}
 		} else if claudeResponse.Type == "message_delta" {
-			finishReason := stopReasonClaude2OpenAI(*claudeResponse.Delta.StopReason)
-			if finishReason != "null" {
-				choice.FinishReason = &finishReason
+			if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
+				finishReason := stopReasonClaude2OpenAI(*claudeResponse.Delta.StopReason)
+				if finishReason != "null" {
+					choice.FinishReason = &finishReason
+				}
 			}
 			//claudeUsage = &claudeResponse.Usage
 		} else if claudeResponse.Type == "message_stop" {
@@ -673,7 +675,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, requestMode int) {
 
 	if requestMode == RequestModeCompletion {
-		claudeInfo.Usage = service.ResponseText2Usage(claudeInfo.ResponseText.String(), info.UpstreamModelName, info.PromptTokens)
+		claudeInfo.Usage = service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 	} else {
 		if claudeInfo.Usage.PromptTokens == 0 {
 			//上游出错
@@ -682,7 +684,7 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 			if common.DebugEnabled {
 				common.SysLog("claude response usage is not complete, maybe upstream error")
 			}
-			claudeInfo.Usage = service.ResponseText2Usage(claudeInfo.ResponseText.String(), info.UpstreamModelName, claudeInfo.Usage.PromptTokens)
+			claudeInfo.Usage = service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, claudeInfo.Usage.PromptTokens)
 		}
 	}
 
@@ -734,10 +736,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
 	if requestMode == RequestModeCompletion {
-		completionTokens := service.CountTextToken(claudeResponse.Completion, info.OriginModelName)
-		claudeInfo.Usage.PromptTokens = info.PromptTokens
-		claudeInfo.Usage.CompletionTokens = completionTokens
-		claudeInfo.Usage.TotalTokens = info.PromptTokens + completionTokens
+		claudeInfo.Usage = service.ResponseText2Usage(c, claudeResponse.Completion, info.UpstreamModelName, info.GetEstimatePromptTokens())
 	} else {
 		claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
 		claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens

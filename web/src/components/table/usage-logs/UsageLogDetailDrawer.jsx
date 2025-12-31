@@ -112,6 +112,55 @@ const splitStreamingResponse = (raw) => {
     }
   });
 
+  if (sseObjects.length === 0) {
+    // Fallback: tolerate SSE logs that contain `data:` lines but are not separated by blank lines.
+    const lines = trimmed.split(/\r?\n/);
+    let dataBuffer = '';
+    const flushBuffer = () => {
+      const candidate = dataBuffer.trim();
+      dataBuffer = '';
+      if (!candidate || candidate === '[DONE]') {
+        return;
+      }
+      const parsed = safeParseJson(candidate);
+      if (parsed) {
+        sseObjects.push(parsed);
+      }
+    };
+
+    lines.forEach((line) => {
+      const current = typeof line === 'string' ? line.trim() : '';
+      if (!current) {
+        flushBuffer();
+        return;
+      }
+      if (!current.startsWith('data:')) {
+        return;
+      }
+      const payload = current.slice(5).trim();
+      if (!payload) {
+        return;
+      }
+      if (!dataBuffer) {
+        const parsed = safeParseJson(payload);
+        if (parsed) {
+          sseObjects.push(parsed);
+          return;
+        }
+        dataBuffer = payload;
+        return;
+      }
+
+      dataBuffer += payload;
+      const parsed = safeParseJson(dataBuffer);
+      if (parsed) {
+        sseObjects.push(parsed);
+        dataBuffer = '';
+      }
+    });
+    flushBuffer();
+  }
+
   if (sseObjects.length > 0) {
     // For OpenAI-style streaming responses, return the original array
     // This will be processed by aggregateOpenAIStreamChunks later
@@ -163,6 +212,31 @@ const splitStreamingResponse = (raw) => {
   }
 
   return objects;
+};
+
+const looksLikeStreamObject = (obj) => {
+  if (!obj || typeof obj !== 'object') {
+    return false;
+  }
+  if (typeof obj.type === 'string') {
+    if (obj.type.startsWith('response.')) {
+      return true;
+    }
+    if (
+      obj.type.startsWith('message_') ||
+      obj.type.startsWith('content_block_') ||
+      obj.type.startsWith('input_json_')
+    ) {
+      return true;
+    }
+  }
+  if (obj.object === 'chat.completion.chunk') {
+    return true;
+  }
+  if (Array.isArray(obj.choices) && obj.choices.some((c) => c?.delta)) {
+    return true;
+  }
+  return false;
 };
 
 const normaliseContent = (content) => {
@@ -313,7 +387,11 @@ const createToolResultSegment = (result) => {
   }
   return {
     type: 'tool_result',
-    id: result.tool_use_id || result.toolUseId || result.id || result.tool_call_id,
+    id:
+      result.tool_use_id ||
+      result.toolUseId ||
+      result.id ||
+      result.tool_call_id,
     name: result.name || result.tool_name || result.toolName || 'tool',
     value: formatted,
   };
@@ -332,7 +410,9 @@ const segmentsToPlainText = (segments) => {
     return '';
   }
   return segments
-    .filter((segment) => segment.type === 'text' || segment.type === 'reasoning')
+    .filter(
+      (segment) => segment.type === 'text' || segment.type === 'reasoning',
+    )
     .map((segment) => segment.value)
     .join('\n');
 };
@@ -360,7 +440,8 @@ const copyToClipboard = async (text) => {
     document.body.appendChild(textarea);
 
     const selection = document.getSelection();
-    const selectedRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    const selectedRange =
+      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
 
     textarea.select();
     const succeeded = document.execCommand('copy');
@@ -383,7 +464,10 @@ const getSegmentCopyText = (segment, t) => {
     return '';
   }
 
-  const value = typeof segment.value === 'string' ? segment.value : String(segment.value ?? '');
+  const value =
+    typeof segment.value === 'string'
+      ? segment.value
+      : String(segment.value ?? '');
 
   switch (segment.type) {
     case 'reasoning':
@@ -467,7 +551,11 @@ const handleContentNode = (node, segments) => {
   if (node === undefined || node === null) {
     return;
   }
-  if (typeof node === 'string' || typeof node === 'number' || typeof node === 'boolean') {
+  if (
+    typeof node === 'string' ||
+    typeof node === 'number' ||
+    typeof node === 'boolean'
+  ) {
     addTextSegment(segments, String(node));
     return;
   }
@@ -494,7 +582,10 @@ const handleContentNode = (node, segments) => {
   }
 
   if (type === 'reasoning' || type === 'thinking' || node.thinking) {
-    addReasoningSegment(segments, node.text ?? node.reasoning ?? node.thinking ?? node.value);
+    addReasoningSegment(
+      segments,
+      node.text ?? node.reasoning ?? node.thinking ?? node.value,
+    );
     return;
   }
 
@@ -626,15 +717,14 @@ const aggregateOpenAIStreamChunks = (streamObjects) => {
     if (Array.isArray(delta.tool_calls)) {
       delta.tool_calls.forEach((toolDelta, index) => {
         const targetIndex = toolDelta.index ?? index;
-        const existing =
-          toolCalls[targetIndex] || {
-            id: toolDelta.id,
-            type: toolDelta.type,
-            function: {
-              name: toolDelta.function?.name || '',
-              arguments: '',
-            },
-          };
+        const existing = toolCalls[targetIndex] || {
+          id: toolDelta.id,
+          type: toolDelta.type,
+          function: {
+            name: toolDelta.function?.name || '',
+            arguments: '',
+          },
+        };
         if (toolDelta.id) {
           existing.id = toolDelta.id;
         }
@@ -673,6 +763,339 @@ const aggregateOpenAIStreamChunks = (streamObjects) => {
       }
       return call;
     });
+  }
+
+  return message;
+};
+
+const aggregateResponsesStreamEvents = (events) => {
+  if (!Array.isArray(events) || events.length === 0) {
+    return null;
+  }
+
+  const textByIndex = new Map();
+  const outputItemsByIndex = new Map();
+  const functionCallArgsByKey = new Map();
+  let reasoning = '';
+  let latestResponse = null;
+
+  const appendIndexedText = (outputIndex, contentIndex, fragment) => {
+    const text = normaliseContent(fragment);
+    if (!text) {
+      return;
+    }
+    const key = `${outputIndex ?? 0}:${contentIndex ?? 0}`;
+    textByIndex.set(key, (textByIndex.get(key) || '') + text);
+  };
+
+  const getFunctionCallKeys = (event) => {
+    if (!event || typeof event !== 'object') {
+      return ['output_index:0'];
+    }
+    const keys = [];
+    const id =
+      event.item_id ??
+      event.itemId ??
+      event.id ??
+      event.tool_call_id ??
+      event.toolCallId;
+    if (id !== undefined && id !== null && String(id).trim()) {
+      keys.push(String(id));
+    }
+    const outputIndex = event.output_index ?? event.outputIndex;
+    keys.push(`output_index:${outputIndex ?? 0}`);
+    return Array.from(new Set(keys));
+  };
+
+  const appendFunctionCallArgs = (key, fragment) => {
+    if (!key || typeof fragment !== 'string') {
+      return;
+    }
+    functionCallArgsByKey.set(key, (functionCallArgsByKey.get(key) || '') + fragment);
+  };
+
+  const upsertOutputItem = (outputIndexRaw, item) => {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+    const outputIndex =
+      outputIndexRaw ??
+      item.output_index ??
+      item.outputIndex ??
+      item.output_item_index ??
+      item.outputItemIndex;
+    const indexKey = outputIndex ?? outputItemsByIndex.size;
+    const existing = outputItemsByIndex.get(indexKey);
+    const merged = existing ? { ...existing, ...item } : { ...item };
+    if (outputIndex !== undefined && outputIndex !== null) {
+      merged.output_index = outputIndex;
+    }
+    outputItemsByIndex.set(indexKey, merged);
+  };
+
+  const pickLongerString = (a, b) => {
+    const left = typeof a === 'string' ? a : '';
+    const right = typeof b === 'string' ? b : '';
+    return right.length > left.length ? right : left;
+  };
+
+  const patchFunctionCallArguments = (item, fallbackOutputIndex) => {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+
+    const outputIndex =
+      item.output_index ?? item.outputIndex ?? fallbackOutputIndex ?? 0;
+    const id =
+      item.id ??
+      item.item_id ??
+      item.itemId ??
+      item.tool_call_id ??
+      item.toolCallId;
+
+    const keys = [];
+    if (id !== undefined && id !== null) {
+      keys.push(String(id));
+    }
+    keys.push(`output_index:${outputIndex}`);
+
+    const collected = keys
+      .map((key) => functionCallArgsByKey.get(key))
+      .find((value) => typeof value === 'string' && value.length > 0);
+    if (!collected) {
+      return item;
+    }
+
+    const existingArgs =
+      item.arguments ??
+      item.input_json ??
+      item.input ??
+      item.function?.arguments ??
+      item.parameters;
+    const best = pickLongerString(existingArgs, collected);
+
+    if (best === existingArgs) {
+      return item;
+    }
+
+    if (item.function && typeof item.function === 'object') {
+      return {
+        ...item,
+        function: {
+          ...item.function,
+          arguments: best,
+        },
+      };
+    }
+
+    return {
+      ...item,
+      arguments: best,
+    };
+  };
+
+  events.forEach((event) => {
+    if (!event || typeof event !== 'object') {
+      return;
+    }
+    const type = event.type;
+    if (typeof type !== 'string') {
+      return;
+    }
+
+    if (event.response && typeof event.response === 'object') {
+      latestResponse = event.response;
+    }
+
+    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+      const outputIndex =
+        event.output_index ??
+        event.outputIndex ??
+        event.item?.output_index ??
+        event.item?.outputIndex;
+      const item =
+        event.item ?? event.output_item ?? event.outputItem ?? event.output;
+      upsertOutputItem(outputIndex, item);
+    }
+
+    if (
+      type === 'response.function_call_arguments.delta' ||
+      type === 'response.tool_call_arguments.delta'
+    ) {
+      const fragment =
+        typeof event.delta === 'string'
+          ? event.delta
+          : typeof event.arguments_delta === 'string'
+            ? event.arguments_delta
+            : typeof event.argumentsDelta === 'string'
+              ? event.argumentsDelta
+              : undefined;
+      if (fragment !== undefined) {
+        getFunctionCallKeys(event).forEach((key) =>
+          appendFunctionCallArgs(key, fragment),
+        );
+      }
+      return;
+    }
+
+    if (
+      type === 'response.function_call_arguments.done' ||
+      type === 'response.tool_call_arguments.done'
+    ) {
+      const full =
+        typeof event.arguments === 'string'
+          ? event.arguments
+          : typeof event.delta === 'string'
+            ? event.delta
+            : undefined;
+      if (full !== undefined) {
+        getFunctionCallKeys(event).forEach((key) =>
+          functionCallArgsByKey.set(key, full),
+        );
+      }
+      return;
+    }
+
+    if (type === 'response.output_text.delta') {
+      const fragment =
+        event.delta !== undefined
+          ? event.delta
+          : event.text !== undefined
+            ? event.text
+            : event.output_text;
+      if (fragment !== undefined) {
+        appendIndexedText(event.output_index, event.content_index, fragment);
+      }
+      return;
+    }
+
+    if (type === 'response.output_text.done') {
+      const fragment =
+        event.text !== undefined
+          ? event.text
+          : event.output_text !== undefined
+            ? event.output_text
+            : event.delta;
+      if (fragment !== undefined) {
+        appendIndexedText(event.output_index, event.content_index, fragment);
+      }
+      return;
+    }
+
+    if (type.includes('reasoning')) {
+      const fragment =
+        event.delta !== undefined
+          ? event.delta
+          : event.text !== undefined
+            ? event.text
+            : event.reasoning_text;
+      if (fragment !== undefined) {
+        reasoning += normaliseContent(fragment);
+      }
+    }
+  });
+
+  const mergedText = Array.from(textByIndex.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, value]) => value)
+    .join('');
+
+  const responseOutput = Array.isArray(latestResponse?.output)
+    ? latestResponse.output
+    : [];
+  const outputFromResponse = responseOutput.length > 0;
+  const outputFromEvents = Array.from(outputItemsByIndex.entries())
+    .sort((a, b) => {
+      const left = typeof a[0] === 'number' ? a[0] : Number(String(a[0]));
+      const right = typeof b[0] === 'number' ? b[0] : Number(String(b[0]));
+      const safeLeft = Number.isFinite(left) ? left : 0;
+      const safeRight = Number.isFinite(right) ? right : 0;
+      return safeLeft - safeRight;
+    })
+    .map(([, item]) => item)
+    .filter(Boolean);
+  const baseOutput = outputFromResponse ? responseOutput : outputFromEvents;
+  const patchedOutput = ensureArray(baseOutput)
+    .filter(Boolean)
+    .map((item, index) => patchFunctionCallArguments(item, index));
+
+  const syntheticOutput =
+    patchedOutput.length > 0
+      ? []
+      : Array.from(functionCallArgsByKey.entries())
+          .filter(
+            ([key, value]) =>
+              typeof key === 'string' &&
+              key.startsWith('output_index:') &&
+              typeof value === 'string' &&
+              value.trim(),
+          )
+          .sort((a, b) => {
+            const left = Number(a[0].slice('output_index:'.length));
+            const right = Number(b[0].slice('output_index:'.length));
+            const safeLeft = Number.isFinite(left) ? left : 0;
+            const safeRight = Number.isFinite(right) ? right : 0;
+            return safeLeft - safeRight;
+          })
+          .map(([key, value]) => {
+            const outputIndex = Number(key.slice('output_index:'.length));
+            return {
+              type: 'function_call',
+              output_index: Number.isFinite(outputIndex) ? outputIndex : undefined,
+              name: 'function_call',
+              arguments: value,
+            };
+          });
+  const effectiveOutput = patchedOutput.length > 0 ? patchedOutput : syntheticOutput;
+
+  if (effectiveOutput.length > 0) {
+    const message = {
+      role: latestResponse?.role || 'assistant',
+      output: effectiveOutput,
+    };
+    if (!outputFromResponse && mergedText.trim()) {
+      message.content = mergedText;
+    }
+    if (reasoning.trim()) {
+      message.reasoning = reasoning;
+    }
+    return message;
+  }
+
+  if (!mergedText.trim()) {
+    const responseTextSource =
+      latestResponse?.output_text ?? latestResponse?.outputText;
+    const fallbackText =
+      responseTextSource !== undefined
+        ? normaliseContent(responseTextSource)
+        : typeof latestResponse?.text === 'string'
+          ? normaliseContent(latestResponse.text)
+          : latestResponse?.content !== undefined
+            ? normaliseContent(latestResponse.content)
+            : latestResponse?.output_texts !== undefined
+              ? normaliseContent(latestResponse.output_texts)
+              : '';
+    if (fallbackText && typeof fallbackText === 'string' && fallbackText.trim()) {
+      return {
+        role: latestResponse?.role || 'assistant',
+        content: fallbackText,
+        reasoning: reasoning.trim() ? reasoning : undefined,
+      };
+    }
+  }
+
+  if (!mergedText.trim() && !reasoning.trim()) {
+    return null;
+  }
+
+  const message = { role: 'assistant' };
+
+  if (mergedText.trim()) {
+    message.content = mergedText;
+  }
+
+  if (reasoning.trim()) {
+    message.reasoning = reasoning;
   }
 
   return message;
@@ -738,10 +1161,12 @@ const aggregateClaudeStreamEvents = (events) => {
             break;
           case 'input_json_delta':
             block.partialJson =
-              (block.partialJson || '') + (delta.partial_json ?? delta.partialJson ?? '');
+              (block.partialJson || '') +
+              (delta.partial_json ?? delta.partialJson ?? '');
             break;
           case 'tool_use_delta':
-            block.partialJson = (block.partialJson || '') + (delta.arguments || '');
+            block.partialJson =
+              (block.partialJson || '') + (delta.arguments || '');
             break;
           default:
             if (delta.text) {
@@ -839,6 +1264,15 @@ const buildMessageFromStreamObjects = (streamObjects) => {
     return aggregateOpenAIStreamChunks(streamObjects);
   }
 
+  if (
+    streamObjects.some(
+      (obj) =>
+        typeof obj?.type === 'string' && obj.type.startsWith('response.'),
+    )
+  ) {
+    return aggregateResponsesStreamEvents(streamObjects);
+  }
+
   if (streamObjects.some((obj) => typeof obj?.type === 'string')) {
     return aggregateClaudeStreamEvents(streamObjects);
   }
@@ -916,8 +1350,15 @@ const collectResponseUsage = (responseObject, streamObjects) => {
     return responseObject.usage;
   }
   if (Array.isArray(streamObjects)) {
-    const withUsage = [...streamObjects].reverse().find((obj) => obj.usage);
-    return withUsage?.usage ?? null;
+    const withUsage = [...streamObjects]
+      .reverse()
+      .find((obj) => obj?.usage || obj?.response?.usage);
+    if (withUsage?.usage) {
+      return withUsage.usage;
+    }
+    if (withUsage?.response?.usage) {
+      return withUsage.response.usage;
+    }
   }
   return null;
 };
@@ -932,10 +1373,7 @@ const collectResponseMessages = (responseObject, streamObjects) => {
     const message = buildMessageFromSource(source, fallbackRole);
     if (message.segments.length === 0 && !message.text) {
       const fallbackContent = normaliseContent(
-        source?.content ??
-          source?.text ??
-          source?.delta?.content ??
-          source,
+        source?.content ?? source?.text ?? source?.delta?.content ?? source,
       );
       if (fallbackContent && fallbackContent.trim()) {
         const fallbackSegment = createTextSegment(fallbackContent);
@@ -963,6 +1401,16 @@ const collectResponseMessages = (responseObject, streamObjects) => {
     });
   }
 
+  if (Array.isArray(responseObject)) {
+    responseObject.forEach((item) => {
+      if (!item) {
+        return;
+      }
+      const role = item.role || responseObject.role || 'assistant';
+      pushMessage({ ...item, role }, role);
+    });
+  }
+
   if (responseObject?.content !== undefined) {
     pushMessage(responseObject, responseObject.role || 'assistant');
   }
@@ -977,12 +1425,32 @@ const collectResponseMessages = (responseObject, streamObjects) => {
     });
   }
 
+  if (
+    messages.length === 0 &&
+    (responseObject?.output_text !== undefined ||
+      responseObject?.outputText !== undefined)
+  ) {
+    pushMessage(
+      {
+        role: responseObject?.role || 'assistant',
+        content: responseObject?.output_text ?? responseObject?.outputText,
+      },
+      responseObject?.role || 'assistant',
+    );
+  }
+
   if (responseObject?.message) {
-    pushMessage(responseObject.message, responseObject.message.role || 'assistant');
+    pushMessage(
+      responseObject.message,
+      responseObject.message.role || 'assistant',
+    );
   }
 
   if (responseObject?.result) {
-    pushMessage(responseObject.result, responseObject.result.role || 'assistant');
+    pushMessage(
+      responseObject.result,
+      responseObject.result.role || 'assistant',
+    );
   }
 
   if (Array.isArray(responseObject?.messages)) {
@@ -993,14 +1461,20 @@ const collectResponseMessages = (responseObject, streamObjects) => {
 
   if (responseObject?.completion) {
     pushMessage(
-      { role: responseObject.role || 'assistant', content: responseObject.completion },
+      {
+        role: responseObject.role || 'assistant',
+        content: responseObject.completion,
+      },
       responseObject.role || 'assistant',
     );
   }
 
   if (responseObject?.reply) {
     pushMessage(
-      { role: responseObject.role || 'assistant', content: responseObject.reply },
+      {
+        role: responseObject.role || 'assistant',
+        content: responseObject.reply,
+      },
       responseObject.role || 'assistant',
     );
   }
@@ -1035,6 +1509,7 @@ const buildRequestParams = (requestObject, t) => {
   pushIfPresent(t('温度'), requestObject.temperature);
   pushIfPresent('top_p', requestObject.top_p);
   pushIfPresent(t('最大Tokens'), requestObject.max_tokens);
+  pushIfPresent('max_output_tokens', requestObject.max_output_tokens);
   pushIfPresent(t('响应格式'), requestObject.response_format);
   if (requestObject.tools) {
     let count = 0;
@@ -1151,12 +1626,12 @@ const ToolsSummary = ({ tools, t }) => {
       const type = Array.isArray(prop.type)
         ? prop.type.join('|')
         : typeof prop.type === 'string'
-        ? prop.type
-        : prop.enum
-        ? 'enum'
-        : prop.anyOf || prop.oneOf
-        ? 'union'
-        : 'any';
+          ? prop.type
+          : prop.enum
+            ? 'enum'
+            : prop.anyOf || prop.oneOf
+              ? 'union'
+              : 'any';
       return {
         key,
         type,
@@ -1166,13 +1641,15 @@ const ToolsSummary = ({ tools, t }) => {
     });
     const headerRight = (
       <Space wrap spacing={8} className='mr-2'>
-        {params.length > 0
-          ? params.map((p) => (
-              <Tag key={`param-pill-${index}-${p.key}`} type='ghost' color='blue'>
-                {p.key}
-              </Tag>
-            ))
-          : <Text type='tertiary'>{t('暂无参数')}</Text>}
+        {params.length > 0 ? (
+          params.map((p) => (
+            <Tag key={`param-pill-${index}-${p.key}`} type='ghost' color='blue'>
+              {p.key}
+            </Tag>
+          ))
+        ) : (
+          <Text type='tertiary'>{t('暂无参数')}</Text>
+        )}
       </Space>
     );
 
@@ -1193,9 +1670,19 @@ const ToolsSummary = ({ tools, t }) => {
         {params.length > 0 ? (
           <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
             {params.map((p) => (
-              <Space align='center' wrap spacing={8} key={`param-${name}-${p.key}`} style={{ width: '100%' }}>
-                <Tag type='ghost' color='blue'>{p.key}</Tag>
-                <Tag type='ghost' color='purple'>{p.type}</Tag>
+              <Space
+                align='center'
+                wrap
+                spacing={8}
+                key={`param-${name}-${p.key}`}
+                style={{ width: '100%' }}
+              >
+                <Tag type='ghost' color='blue'>
+                  {p.key}
+                </Tag>
+                <Tag type='ghost' color='purple'>
+                  {p.type}
+                </Tag>
                 <Tag type='ghost' color={p.required ? 'orange' : 'green'}>
                   {p.required ? t('必填') : t('可选')}
                 </Tag>
@@ -1288,7 +1775,9 @@ const MessageSegmentView = ({ segment, t }) => {
                 icon={<IconCopy />}
                 aria-label={t('复制')}
                 onClick={async () => {
-                  const ok = await copyToClipboard(getSegmentCopyText(segment, t));
+                  const ok = await copyToClipboard(
+                    getSegmentCopyText(segment, t),
+                  );
                   if (ok) {
                     Toast.success(t('消息已复制到剪贴板'));
                   } else {
@@ -1329,7 +1818,9 @@ const MessageSegmentView = ({ segment, t }) => {
                 icon={<IconCopy />}
                 aria-label={t('复制')}
                 onClick={async () => {
-                  const ok = await copyToClipboard(getSegmentCopyText(segment, t));
+                  const ok = await copyToClipboard(
+                    getSegmentCopyText(segment, t),
+                  );
                   if (ok) {
                     Toast.success(t('消息已复制到剪贴板'));
                   } else {
@@ -1374,13 +1865,23 @@ const MessageContent = ({ message, t }) => {
   return (
     <Space vertical align='start' style={{ width: '100%' }} spacing={12}>
       {segments.map((segment, index) => (
-        <MessageSegmentView key={`segment-${segment.type}-${index}`} segment={segment} t={t} />
+        <MessageSegmentView
+          key={`segment-${segment.type}-${index}`}
+          segment={segment}
+          t={t}
+        />
       ))}
     </Space>
   );
 };
 
-const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) => {
+const RawView = ({
+  t,
+  requestRaw,
+  responseRaw,
+  responseJson,
+  streamObjects,
+}) => {
   const [wrapReq, setWrapReq] = useState(true);
   const [wrapRes, setWrapRes] = useState(true);
   const requestText = formatJsonString(requestRaw) || t('暂无数据');
@@ -1389,7 +1890,9 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
       return formatJsonString(responseRaw);
     }
     if (Array.isArray(streamObjects) && streamObjects.length > 0) {
-      return streamObjects.map((obj) => JSON.stringify(obj, null, 2)).join('\n\n');
+      return streamObjects
+        .map((obj) => JSON.stringify(obj, null, 2))
+        .join('\n\n');
     }
     return responseRaw ? responseRaw.trim() : t('暂无数据');
   })();
@@ -1397,7 +1900,10 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
   return (
     <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
       <div style={{ width: '100%' }}>
-        <Space align='center' style={{ width: '100%', justifyContent: 'space-between' }}>
+        <Space
+          align='center'
+          style={{ width: '100%', justifyContent: 'space-between' }}
+        >
           <Title heading={4}>{t('请求体')}</Title>
           <Space>
             <Button
@@ -1414,7 +1920,11 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
             >
               {t('复制')}
             </Button>
-            <Button size='small' type='tertiary' onClick={() => setWrapReq((v) => !v)}>
+            <Button
+              size='small'
+              type='tertiary'
+              onClick={() => setWrapReq((v) => !v)}
+            >
               {wrapReq ? t('关闭换行') : t('开启换行')}
             </Button>
           </Space>
@@ -1427,7 +1937,10 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
         </pre>
       </div>
       <div style={{ width: '100%' }}>
-        <Space align='center' style={{ width: '100%', justifyContent: 'space-between' }}>
+        <Space
+          align='center'
+          style={{ width: '100%', justifyContent: 'space-between' }}
+        >
           <Title heading={4}>{t('响应体')}</Title>
           <Space>
             <Button
@@ -1444,7 +1957,11 @@ const RawView = ({ t, requestRaw, responseRaw, responseJson, streamObjects }) =>
             >
               {t('复制')}
             </Button>
-            <Button size='small' type='tertiary' onClick={() => setWrapRes((v) => !v)}>
+            <Button
+              size='small'
+              type='tertiary'
+              onClick={() => setWrapRes((v) => !v)}
+            >
               {wrapRes ? t('关闭换行') : t('开启换行')}
             </Button>
           </Space>
@@ -1470,42 +1987,51 @@ const JsonNode = ({ label, value, t, depth = 0 }) => {
     }
     return false;
   });
-  const isComplex = Array.isArray(value) || (value && typeof value === 'object');
+  const isComplex =
+    Array.isArray(value) || (value && typeof value === 'object');
   return (
     <div className='w-full'>
       <Space align='center' spacing={8} style={{ marginBottom: 8 }}>
         {label !== undefined ? (
-          <Tag type='ghost' color='cyan'>{String(label)}</Tag>
+          <Tag type='ghost' color='cyan'>
+            {String(label)}
+          </Tag>
         ) : null}
         {isComplex ? (
-          <Button size='small' type='tertiary' onClick={() => setCollapsed((v) => !v)}>
+          <Button
+            size='small'
+            type='tertiary'
+            onClick={() => setCollapsed((v) => !v)}
+          >
             {collapsed ? t('展开') : t('收起')}
           </Button>
         ) : null}
       </Space>
       {isComplex ? (
-        collapsed ? null : (
-          Array.isArray(value) ? (
-            <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
-              {value.map((item, idx) => (
-                <div key={`idx-${idx}`} className='w-full'>
-                  <JsonNode label={idx} value={item} t={t} depth={depth + 1} />
-                </div>
-              ))}
-            </Space>
-          ) : (
-            <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
-              {Object.keys(value).map((k) => (
-                <div key={`key-${k}`} className='w-full'>
-                  <JsonNode label={k} value={value[k]} t={t} depth={depth + 1} />
-                </div>
-              ))}
-            </Space>
-          )
+        collapsed ? null : Array.isArray(value) ? (
+          <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
+            {value.map((item, idx) => (
+              <div key={`idx-${idx}`} className='w-full'>
+                <JsonNode label={idx} value={item} t={t} depth={depth + 1} />
+              </div>
+            ))}
+          </Space>
+        ) : (
+          <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
+            {Object.keys(value).map((k) => (
+              <div key={`key-${k}`} className='w-full'>
+                <JsonNode label={k} value={value[k]} t={t} depth={depth + 1} />
+              </div>
+            ))}
+          </Space>
         )
       ) : (
         <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-          {typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''}
+          {typeof value === 'string'
+            ? value
+            : typeof value === 'number' || typeof value === 'boolean'
+              ? String(value)
+              : ''}
         </Paragraph>
       )}
     </div>
@@ -1527,7 +2053,11 @@ const AnchorNav = ({ t, anchors }) => {
   const items = [
     { key: 'params', label: t('请求参数'), ref: anchors?.paramsRef },
     { key: 'req', label: t('请求消息'), ref: anchors?.reqMsgsRef },
-    { key: 'respOverview', label: t('响应概览'), ref: anchors?.respOverviewRef },
+    {
+      key: 'respOverview',
+      label: t('响应概览'),
+      ref: anchors?.respOverviewRef,
+    },
     { key: 'resp', label: t('响应消息'), ref: anchors?.respMsgsRef },
   ];
   return (
@@ -1537,7 +2067,12 @@ const AnchorNav = ({ t, anchors }) => {
           key={item.key}
           size='small'
           type='tertiary'
-          onClick={() => item.ref?.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          onClick={() =>
+            item.ref?.current?.scrollIntoView({
+              behavior: 'smooth',
+              block: 'start',
+            })
+          }
         >
           {item.label}
         </Button>
@@ -1697,22 +2232,59 @@ const UsageLogDetailDrawer = ({
 
   const requestJson = useMemo(() => safeParseJson(requestRaw), [requestRaw]);
   const responseJson = useMemo(() => safeParseJson(responseRaw), [responseRaw]);
-  const streamObjects = useMemo(
-    () => (!responseJson ? splitStreamingResponse(responseRaw) : []),
-    [responseJson, responseRaw],
+  const isSingleStreamObject = useMemo(
+    () => looksLikeStreamObject(responseJson),
+    [responseJson],
   );
+  const streamObjects = useMemo(() => {
+    if (responseJson && isSingleStreamObject) {
+      return [responseJson];
+    }
+    if (Array.isArray(responseJson)) {
+      const candidates = responseJson.filter((item) => looksLikeStreamObject(item));
+      if (candidates.length > 0) {
+        return candidates;
+      }
+      const nestedCandidates = responseJson
+        .map((item) => item?.events ?? item?.data ?? item?.chunks)
+        .find((value) => Array.isArray(value) && value.some(looksLikeStreamObject));
+      if (Array.isArray(nestedCandidates)) {
+        return nestedCandidates.filter(Boolean);
+      }
+    }
+    if (responseJson && typeof responseJson === 'object') {
+      const container =
+        responseJson.events ?? responseJson.data ?? responseJson.chunks;
+      if (Array.isArray(container) && container.some(looksLikeStreamObject)) {
+        return container.filter(Boolean);
+      }
+    }
+    if (!responseJson) {
+      return splitStreamingResponse(responseRaw);
+    }
+    return [];
+  }, [isSingleStreamObject, responseJson, responseRaw]);
+  const effectiveResponseJson = useMemo(() => {
+    if (isSingleStreamObject) {
+      return null;
+    }
+    if (Array.isArray(streamObjects) && streamObjects.length > 0) {
+      return null;
+    }
+    return responseJson;
+  }, [isSingleStreamObject, responseJson, streamObjects]);
 
   const requestMessages = useMemo(
     () => collectRequestMessages(requestJson),
     [requestJson],
   );
   const responseMessages = useMemo(
-    () => collectResponseMessages(responseJson, streamObjects),
-    [responseJson, streamObjects],
+    () => collectResponseMessages(effectiveResponseJson, streamObjects),
+    [effectiveResponseJson, streamObjects],
   );
   const responseUsage = useMemo(
-    () => collectResponseUsage(responseJson, streamObjects),
-    [responseJson, streamObjects],
+    () => collectResponseUsage(effectiveResponseJson, streamObjects),
+    [effectiveResponseJson, streamObjects],
   );
 
   const paramsRef = useRef(null);
@@ -1752,7 +2324,6 @@ const UsageLogDetailDrawer = ({
     }
   };
 
-
   return (
     <SideSheet
       placement='right'
@@ -1760,9 +2331,11 @@ const UsageLogDetailDrawer = ({
       onCancel={onClose}
       width={'clamp(360px, 92vw, 960px)'}
       maskClosable
-      title={(
+      title={
         <div className='w-full flex items-center justify-between'>
-          <Title heading={4} style={{ margin: 0 }}>{t('请求详情')}</Title>
+          <Title heading={4} style={{ margin: 0 }}>
+            {t('请求详情')}
+          </Title>
           <RadioGroup
             type='button'
             buttonSize='small'
@@ -1774,7 +2347,7 @@ const UsageLogDetailDrawer = ({
             <Radio value='raw'>{t('原始数据')}</Radio>
           </RadioGroup>
         </div>
-      )}
+      }
       className='usage-log-detail-drawer'
       closeIcon={
         <Button
@@ -1784,7 +2357,11 @@ const UsageLogDetailDrawer = ({
           onClick={onClose}
         />
       }
-      bodyStyle={{ padding: '0 24px 16px 24px', height: '100%', overflow: 'auto' }}
+      bodyStyle={{
+        padding: '0 24px 16px 24px',
+        height: '100%',
+        overflow: 'auto',
+      }}
     >
       <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
         {viewMode === 'formatted' ? (
@@ -1796,7 +2373,10 @@ const UsageLogDetailDrawer = ({
                 onChange={(key) => setActiveTab(key)}
                 className='w-full'
                 style={{ width: '100%' }}
-                tabBarStyle={{ background: 'var(--semi-color-bg-2)', padding: 0 }}
+                tabBarStyle={{
+                  background: 'var(--semi-color-bg-2)',
+                  padding: 0,
+                }}
               >
                 <Tabs.TabPane tab={t('请求参数')} itemKey='params' />
                 <Tabs.TabPane tab={t('请求消息')} itemKey='req' />
@@ -1827,7 +2407,9 @@ const UsageLogDetailDrawer = ({
                 {(() => {
                   const messages = requestMessages;
                   if (!messages || messages.length === 0) {
-                    return <Text type='tertiary'>{t('该请求没有消息内容')}</Text>;
+                    return (
+                      <Text type='tertiary'>{t('该请求没有消息内容')}</Text>
+                    );
                   }
                   return messages.map((message, index) => (
                     <div
@@ -1863,7 +2445,10 @@ const UsageLogDetailDrawer = ({
                 data={(() => {
                   const rows = [];
                   if (responseJson?.model) {
-                    rows.push({ key: t('实际模型'), value: responseJson.model });
+                    rows.push({
+                      key: t('实际模型'),
+                      value: responseJson.model,
+                    });
                   }
                   if (responseUsage) {
                     if (responseUsage.prompt_tokens !== undefined) {
@@ -1886,7 +2471,10 @@ const UsageLogDetailDrawer = ({
                     }
                   }
                   if (rows.length === 0) {
-                    rows.push({ key: t('状态'), value: t('未提供响应统计信息') });
+                    rows.push({
+                      key: t('状态'),
+                      value: t('未提供响应统计信息'),
+                    });
                   }
                   return rows;
                 })()}
@@ -1900,7 +2488,9 @@ const UsageLogDetailDrawer = ({
                 {(() => {
                   const messages = responseMessages;
                   if (!messages || messages.length === 0) {
-                    return <Text type='tertiary'>{t('该响应没有消息内容')}</Text>;
+                    return (
+                      <Text type='tertiary'>{t('该响应没有消息内容')}</Text>
+                    );
                   }
                   return messages.map((message, index) => (
                     <div
