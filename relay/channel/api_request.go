@@ -24,6 +24,23 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var defaultPassThroughHeaderDenySet = map[string]struct{}{
+	"authorization":       {},
+	"api-key":             {},
+	"x-api-key":           {},
+	"connection":          {},
+	"keep-alive":          {},
+	"proxy-authenticate":  {},
+	"proxy-authorization": {},
+	"te":                  {},
+	"trailer":             {},
+	"transfer-encoding":   {},
+	"upgrade":             {},
+	"proxy-connection":    {},
+	"host":                {},
+	"content-length":      {},
+}
+
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
 	if info.RelayMode == constant.RelayModeAudioTranscription || info.RelayMode == constant.RelayModeAudioTranslation {
 		// multipart/form-data
@@ -79,21 +96,9 @@ func applyPassThroughRequestHeadersIfEnabled(c *gin.Context, info *common.RelayI
 }
 
 func buildPassThroughHeaderDenySet(src http.Header, extraDeny []string) map[string]struct{} {
-	deny := map[string]struct{}{
-		"authorization":       {},
-		"api-key":             {},
-		"x-api-key":           {},
-		"connection":          {},
-		"keep-alive":          {},
-		"proxy-authenticate":  {},
-		"proxy-authorization": {},
-		"te":                  {},
-		"trailer":             {},
-		"transfer-encoding":   {},
-		"upgrade":             {},
-		"proxy-connection":    {},
-		"host":                {},
-		"content-length":      {},
+	deny := make(map[string]struct{}, len(defaultPassThroughHeaderDenySet)+len(extraDeny)+4)
+	for k := range defaultPassThroughHeaderDenySet {
+		deny[k] = struct{}{}
 	}
 
 	// Connection: token1, token2

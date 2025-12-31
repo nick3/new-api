@@ -22,6 +22,12 @@ func TestCopyHeadersExcept_FiltersAuthHopByHopAndConnectionTokens(t *testing.T) 
 	src.Set("Transfer-Encoding", "chunked")
 	src.Set("Host", "example.com")
 	src.Set("Content-Length", "123")
+	src.Set("Keep-Alive", "timeout=5")
+	src.Set("Proxy-Authenticate", "Basic realm=\"proxy\"")
+	src.Set("Proxy-Authorization", "Basic abc")
+	src.Set("Te", "trailers")
+	src.Set("Trailer", "Foo")
+	src.Set("Proxy-Connection", "keep-alive")
 
 	// Connection declares additional hop-by-hop header names (must be filtered)
 	src.Add("Connection", "X-Hop, keep-alive")
@@ -45,8 +51,14 @@ func TestCopyHeadersExcept_FiltersAuthHopByHopAndConnectionTokens(t *testing.T) 
 		"Api-Key",
 		"X-Api-Key",
 		"Connection",
-		"Upgrade",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Te",
+		"Trailer",
 		"Transfer-Encoding",
+		"Upgrade",
+		"Proxy-Connection",
 		"Host",
 		"Content-Length",
 		"X-Hop",
