@@ -270,6 +270,77 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 	return headerOverride, nil
 }
 
+// applyPassThroughRequestHeadersIfEnabled 将下游请求头透传到上游请求头（最低优先级）
+//
+// - 仅当渠道开启 pass_through_header_enabled 时生效
+// - 会过滤鉴权字段与 hop-by-hop 控制头，并解析 Connection 中声明的 hop-by-hop header
+// - 透传发生在 header_override 与 adaptor.SetupRequestHeader 之前，因此优先级最低
+func applyPassThroughRequestHeadersIfEnabled(c *gin.Context, info *common.RelayInfo, dst http.Header, extraDeny []string) {
+	if info == nil || !info.ChannelSetting.PassThroughHeaderEnabled {
+		return
+	}
+	if c == nil || c.Request == nil {
+		return
+	}
+	src := c.Request.Header
+	if src == nil {
+		return
+	}
+	deny := buildPassThroughHeaderDenySet(src, extraDeny)
+	copyHeadersExcept(dst, src, deny)
+}
+
+func buildPassThroughHeaderDenySet(src http.Header, extraDeny []string) map[string]struct{} {
+	deny := map[string]struct{}{
+		"authorization":       {},
+		"api-key":             {},
+		"x-api-key":           {},
+		"connection":          {},
+		"keep-alive":          {},
+		"proxy-authenticate":  {},
+		"proxy-authorization": {},
+		"te":                  {},
+		"trailer":             {},
+		"transfer-encoding":   {},
+		"upgrade":             {},
+		"proxy-connection":    {},
+		"host":                {},
+		"content-length":      {},
+	}
+
+	// Connection: token1, token2
+	for _, v := range src.Values("Connection") {
+		for _, token := range strings.Split(v, ",") {
+			t := strings.ToLower(strings.TrimSpace(token))
+			if t == "" {
+				continue
+			}
+			deny[t] = struct{}{}
+		}
+	}
+
+	for _, h := range extraDeny {
+		t := strings.ToLower(strings.TrimSpace(h))
+		if t == "" {
+			continue
+		}
+		deny[t] = struct{}{}
+	}
+	return deny
+}
+
+func copyHeadersExcept(dst, src http.Header, deny map[string]struct{}) {
+	for k, vv := range src {
+		if len(vv) == 0 {
+			continue
+		}
+		if _, blocked := deny[strings.ToLower(k)]; blocked {
+			continue
+		}
+		dst[http.CanonicalHeaderKey(k)] = append([]string(nil), vv...)
+	}
+}
+
 func ResolveHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]string, error) {
 	return processHeaderOverride(info, c)
 }
@@ -300,6 +371,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
 	headers := req.Header
+	applyPassThroughRequestHeadersIfEnabled(c, info, headers, nil)
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
@@ -333,6 +405,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headers := req.Header
+	applyPassThroughRequestHeadersIfEnabled(c, info, headers, nil)
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
@@ -357,6 +430,11 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	targetHeader := http.Header{}
+	applyPassThroughRequestHeadersIfEnabled(c, info, targetHeader, []string{
+		"Sec-WebSocket-Key",
+		"Sec-WebSocket-Version",
+		"Sec-WebSocket-Extensions",
+	})
 	err = a.SetupRequestHeader(c, &targetHeader, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
@@ -542,9 +620,21 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 		return io.NopCloser(requestBody), nil
 	}
 
+	// Task 请求默认保持原行为；仅在开启“透传请求头”时才透传下游 headers（并允许 header_override 覆盖）。
+	if info != nil && info.ChannelSetting.PassThroughHeaderEnabled {
+		applyPassThroughRequestHeadersIfEnabled(c, info, req.Header, nil)
+	}
+
 	err = a.BuildRequestHeader(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
+	}
+	if info != nil {
+		headerOverride, err := processHeaderOverride(info, c)
+		if err != nil {
+			return nil, err
+		}
+		applyHeaderOverrideToRequest(req, headerOverride)
 	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {

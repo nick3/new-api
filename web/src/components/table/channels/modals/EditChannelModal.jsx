@@ -187,6 +187,7 @@ const EditChannelModal = (props) => {
     force_format: false,
     thinking_to_content: false,
     proxy: '',
+    pass_through_header_enabled: false,
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
@@ -523,6 +524,7 @@ const EditChannelModal = (props) => {
     force_format: false,
     thinking_to_content: false,
     proxy: '',
+    pass_through_header_enabled: false,
     pass_through_body_enabled: false,
     system_prompt: '',
   });
@@ -828,6 +830,8 @@ const EditChannelModal = (props) => {
           data.thinking_to_content =
             parsedSettings.thinking_to_content || false;
           data.proxy = parsedSettings.proxy || '';
+          data.pass_through_header_enabled =
+            parsedSettings.pass_through_header_enabled || false;
           data.pass_through_body_enabled =
             parsedSettings.pass_through_body_enabled || false;
           data.system_prompt = parsedSettings.system_prompt || '';
@@ -838,6 +842,7 @@ const EditChannelModal = (props) => {
           data.force_format = false;
           data.thinking_to_content = false;
           data.proxy = '';
+          data.pass_through_header_enabled = false;
           data.pass_through_body_enabled = false;
           data.system_prompt = '';
           data.system_prompt_override = false;
@@ -846,6 +851,7 @@ const EditChannelModal = (props) => {
         data.force_format = false;
         data.thinking_to_content = false;
         data.proxy = '';
+        data.pass_through_header_enabled = false;
         data.pass_through_body_enabled = false;
         data.system_prompt = '';
         data.system_prompt_override = false;
@@ -951,6 +957,7 @@ const EditChannelModal = (props) => {
         force_format: data.force_format,
         thinking_to_content: data.thinking_to_content,
         proxy: data.proxy,
+        pass_through_header_enabled: data.pass_through_header_enabled,
         pass_through_body_enabled: data.pass_through_body_enabled,
         system_prompt: data.system_prompt,
         system_prompt_override: data.system_prompt_override || false,
@@ -1309,6 +1316,7 @@ const EditChannelModal = (props) => {
       force_format: false,
       thinking_to_content: false,
       proxy: '',
+      pass_through_header_enabled: false,
       pass_through_body_enabled: false,
       system_prompt: '',
       system_prompt_override: false,
@@ -1675,6 +1683,7 @@ const EditChannelModal = (props) => {
       force_format: localInputs.force_format || false,
       thinking_to_content: localInputs.thinking_to_content || false,
       proxy: localInputs.proxy || '',
+      pass_through_header_enabled: localInputs.pass_through_header_enabled || false,
       pass_through_body_enabled: localInputs.pass_through_body_enabled || false,
       system_prompt: localInputs.system_prompt || '',
       system_prompt_override: localInputs.system_prompt_override || false,
@@ -1755,6 +1764,7 @@ const EditChannelModal = (props) => {
     delete localInputs.force_format;
     delete localInputs.thinking_to_content;
     delete localInputs.proxy;
+    delete localInputs.pass_through_header_enabled;
     delete localInputs.pass_through_body_enabled;
     delete localInputs.system_prompt;
     delete localInputs.system_prompt_override;
@@ -3871,6 +3881,22 @@ const EditChannelModal = (props) => {
                       }
                       extraText={t(
                         '将 reasoning_content 转换为 <think> 标签拼接到内容中',
+                      )}
+                    />
+
+                    <Form.Switch
+                      field='pass_through_header_enabled'
+                      label={t('透传请求头')}
+                      checkedText={t('开')}
+                      uncheckedText={t('关')}
+                      onChange={(value) =>
+                        handleChannelSettingsChange(
+                          'pass_through_header_enabled',
+                          value,
+                        )
+                      }
+                      extraText={t(
+                        '透传下游请求头到上游（自动排除 Authorization/api-key/x-api-key 并过滤 hop-by-hop 控制头）',
                       )}
                     />
 
