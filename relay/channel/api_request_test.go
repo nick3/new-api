@@ -16,6 +16,7 @@ func TestCopyHeadersExcept_FiltersAuthHopByHopAndConnectionTokens(t *testing.T) 
 	src.Set("Authorization", "Bearer user")
 	src.Set("api-key", "user-key")
 	src.Set("x-api-key", "user-x-key")
+	src.Set("Cookie", "session=abc")
 
 	// hop-by-hop / control headers (must be filtered)
 	src.Set("Upgrade", "websocket")
@@ -50,6 +51,7 @@ func TestCopyHeadersExcept_FiltersAuthHopByHopAndConnectionTokens(t *testing.T) 
 		"Authorization",
 		"Api-Key",
 		"X-Api-Key",
+		"Cookie",
 		"Connection",
 		"Keep-Alive",
 		"Proxy-Authenticate",
@@ -73,9 +75,9 @@ func TestBuildPassThroughHeaderDenySet_ConnectionTokensAndExtraDeny(t *testing.T
 	src := http.Header{}
 	src.Add("Connection", " X-Hop , Foo ")
 
-	deny := buildPassThroughHeaderDenySet(src, []string{"Sec-WebSocket-Key"})
+	deny := buildPassThroughHeaderDenySet(src, []string{"Sec-WebSocket-Key", "Content-Type"})
 
-	for _, k := range []string{"x-hop", "foo", "sec-websocket-key"} {
+	for _, k := range []string{"x-hop", "foo", "sec-websocket-key", "content-type"} {
 		if _, ok := deny[k]; !ok {
 			t.Fatalf("expected denyset to include %q", k)
 		}
