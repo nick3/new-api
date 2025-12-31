@@ -24,6 +24,24 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var defaultPassThroughHeaderDenySet = map[string]struct{}{
+	"authorization":       {},
+	"api-key":             {},
+	"x-api-key":           {},
+	"cookie":              {},
+	"connection":          {},
+	"keep-alive":          {},
+	"proxy-authenticate":  {},
+	"proxy-authorization": {},
+	"te":                  {},
+	"trailer":             {},
+	"transfer-encoding":   {},
+	"upgrade":             {},
+	"proxy-connection":    {},
+	"host":                {},
+	"content-length":      {},
+}
+
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
 	if info.RelayMode == constant.RelayModeAudioTranscription || info.RelayMode == constant.RelayModeAudioTranslation {
 		// multipart/form-data
@@ -58,6 +76,65 @@ func processHeaderOverride(info *common.RelayInfo) (map[string]string, error) {
 	return headerOverride, nil
 }
 
+// applyPassThroughRequestHeadersIfEnabled 将下游请求头透传到上游请求头（最低优先级）
+//
+// - 仅当渠道开启 pass_through_header_enabled 时生效
+// - 会过滤鉴权字段与 hop-by-hop 控制头，并解析 Connection 中声明的 hop-by-hop header
+// - 透传发生在 header_override 与 adaptor.SetupRequestHeader 之前，因此优先级最低
+func applyPassThroughRequestHeadersIfEnabled(c *gin.Context, info *common.RelayInfo, dst http.Header, extraDeny []string) {
+	if info == nil || !info.ChannelSetting.PassThroughHeaderEnabled {
+		return
+	}
+	if c == nil || c.Request == nil {
+		return
+	}
+	src := c.Request.Header
+	if src == nil {
+		return
+	}
+	deny := buildPassThroughHeaderDenySet(src, extraDeny)
+	copyHeadersExcept(dst, src, deny)
+}
+
+func buildPassThroughHeaderDenySet(src http.Header, extraDeny []string) map[string]struct{} {
+	deny := make(map[string]struct{}, len(defaultPassThroughHeaderDenySet)+len(extraDeny)+4)
+	for k := range defaultPassThroughHeaderDenySet {
+		deny[k] = struct{}{}
+	}
+
+	// Connection: token1, token2
+	for _, v := range src.Values("Connection") {
+		for _, token := range strings.Split(v, ",") {
+			t := strings.ToLower(strings.TrimSpace(token))
+			if t == "" {
+				continue
+			}
+			deny[t] = struct{}{}
+		}
+	}
+
+	for _, h := range extraDeny {
+		t := strings.ToLower(strings.TrimSpace(h))
+		if t == "" {
+			continue
+		}
+		deny[t] = struct{}{}
+	}
+	return deny
+}
+
+func copyHeadersExcept(dst, src http.Header, deny map[string]struct{}) {
+	for k, vv := range src {
+		if len(vv) == 0 {
+			continue
+		}
+		if _, blocked := deny[strings.ToLower(k)]; blocked {
+			continue
+		}
+		dst[http.CanonicalHeaderKey(k)] = append([]string(nil), vv...)
+	}
+}
+
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
@@ -71,6 +148,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
 	headers := req.Header
+	applyPassThroughRequestHeadersIfEnabled(c, info, headers, nil)
 	headerOverride, err := processHeaderOverride(info)
 	if err != nil {
 		return nil, err
@@ -104,6 +182,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headers := req.Header
+	applyPassThroughRequestHeadersIfEnabled(c, info, headers, []string{"Content-Type"})
 	headerOverride, err := processHeaderOverride(info)
 	if err != nil {
 		return nil, err
@@ -128,6 +207,11 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	targetHeader := http.Header{}
+	applyPassThroughRequestHeadersIfEnabled(c, info, targetHeader, []string{
+		"Sec-WebSocket-Key",
+		"Sec-WebSocket-Version",
+		"Sec-WebSocket-Extensions",
+	})
 	headerOverride, err := processHeaderOverride(info)
 	if err != nil {
 		return nil, err
@@ -309,6 +393,18 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	}
 	req.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(requestBody), nil
+	}
+
+	// Task 请求默认保持原行为；仅在开启“透传请求头”时才透传下游 headers（并允许 header_override 覆盖）。
+	if info != nil && info.ChannelSetting.PassThroughHeaderEnabled {
+		applyPassThroughRequestHeadersIfEnabled(c, info, req.Header, nil)
+		headerOverride, err := processHeaderOverride(info)
+		if err != nil {
+			return nil, err
+		}
+		for key, value := range headerOverride {
+			req.Header.Set(key, value)
+		}
 	}
 
 	err = a.BuildRequestHeader(c, req, info)
