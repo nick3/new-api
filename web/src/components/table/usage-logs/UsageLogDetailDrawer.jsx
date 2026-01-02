@@ -120,6 +120,19 @@ const makeSegmentUid = (source, messageIndex, segmentIndex) => {
   return `${prefix}-m${messageIndex}-s${segmentIndex}`;
 };
 
+const parseSegmentUid = (segmentUid) => {
+  const match = /^(req|resp)-m(\d+)-s(\d+)$/.exec(String(segmentUid || ''));
+  if (!match) {
+    return null;
+  }
+  const source = match[1] === 'resp' ? 'response' : 'request';
+  return {
+    source,
+    messageIndex: Number(match[2] || 0),
+    segmentIndex: Number(match[3] || 0),
+  };
+};
+
 const splitStreamingResponse = (raw) => {
   if (!raw || typeof raw !== 'string') {
     return [];
@@ -2761,6 +2774,7 @@ const UsageLogDetailDrawer = ({
   const respOverviewRef = useRef(null);
   const respMsgsRef = useRef(null);
   const stickyHeaderRef = useRef(null);
+  const mainScrollRef = useRef(null);
 
   const segmentRefs = useRef(new Map());
   const segmentRefCallbacks = useRef(new Map());
@@ -2788,6 +2802,9 @@ const UsageLogDetailDrawer = ({
   const [hitPulseNonce, setHitPulseNonce] = useState(0);
   const [pendingJumpUid, setPendingJumpUid] = useState('');
 
+  const [selectedMessageMeta, setSelectedMessageMeta] = useState(null);
+  const [messageDetailOpen, setMessageDetailOpen] = useState(false);
+
   const handleCopyMessage = useCallback(
     async (message, format = 'full') => {
       const copyText = buildMessageCopyTextByFormat(message, t, format);
@@ -2805,6 +2822,77 @@ const UsageLogDetailDrawer = ({
     },
     [t],
   );
+
+  const getMessageCompactSummary = useCallback(
+    (message) => {
+      if (!message) {
+        return '';
+      }
+
+      const firstLine = (value) => {
+        if (value === undefined || value === null) {
+          return '';
+        }
+        return String(value).split('\n')[0] || '';
+      };
+
+      const fromText = firstLine(message.text).trim();
+      if (fromText) {
+        return fromText;
+      }
+
+      const segments = Array.isArray(message.segments) ? message.segments : [];
+      const firstSegment = segments.find(Boolean);
+      if (!firstSegment) {
+        return '';
+      }
+
+      if (firstSegment.type === 'text' || firstSegment.type === 'reasoning') {
+        return firstLine(firstSegment.value).trim();
+      }
+
+      if (firstSegment.type === 'tool_call') {
+        const name = firstSegment.name || firstSegment.id || '';
+        return name ? `${t('工具调用')}: ${name}` : t('工具调用');
+      }
+
+      if (firstSegment.type === 'tool_result') {
+        const name = firstSegment.name || firstSegment.id || '';
+        return name ? `${t('工具结果')}: ${name}` : t('工具结果');
+      }
+
+      if (firstSegment.type === 'json') {
+        const label = firstSegment.label ? String(firstSegment.label) : '';
+        return label ? `${t('JSON')}: ${label}` : t('JSON');
+      }
+
+      return firstSegment.type ? String(firstSegment.type) : '';
+    },
+    [t],
+  );
+
+  const openMessageDetail = useCallback(
+    (source, messageIndex) => {
+      setSelectedMessageMeta({ source, messageIndex });
+      if (isMobile) {
+        setMessageDetailOpen(true);
+      }
+    },
+    [isMobile],
+  );
+
+  const closeMessageDetail = useCallback(() => {
+    setMessageDetailOpen(false);
+  }, []);
+
+  const selectedMessage = useMemo(() => {
+    if (!selectedMessageMeta) {
+      return null;
+    }
+    const { source, messageIndex } = selectedMessageMeta;
+    const list = source === 'request' ? requestMessages : responseMessages;
+    return Array.isArray(list) ? list[messageIndex] : null;
+  }, [requestMessages, responseMessages, selectedMessageMeta]);
 
   const [searchValue, setSearchValue] = useState('');
   const [onlyMatches, setOnlyMatches] = useState(false);
@@ -2924,6 +3012,36 @@ const UsageLogDetailDrawer = ({
     });
   }, [responseMessageItems, searchQueryLower, shouldFilterBySearch]);
 
+  useEffect(() => {
+    if (!shouldFilterBySearch) {
+      return;
+    }
+    if (!selectedMessageMeta) {
+      return;
+    }
+
+    const items =
+      selectedMessageMeta.source === 'response'
+        ? visibleResponseMessageItems
+        : visibleRequestMessageItems;
+
+    const exists = (items || []).some(
+      (item) =>
+        item?.source === selectedMessageMeta.source &&
+        item?.messageIndex === selectedMessageMeta.messageIndex,
+    );
+
+    if (!exists) {
+      setSelectedMessageMeta(null);
+      setMessageDetailOpen(false);
+    }
+  }, [
+    selectedMessageMeta,
+    shouldFilterBySearch,
+    visibleRequestMessageItems,
+    visibleResponseMessageItems,
+  ]);
+
   const visibleToolInvocations = useMemo(() => {
     if (!shouldFilterBySearch) {
       return toolInvocations;
@@ -3012,6 +3130,9 @@ const UsageLogDetailDrawer = ({
     setHitPulseNonce(0);
     setPendingJumpUid('');
 
+    setSelectedMessageMeta(null);
+    setMessageDetailOpen(false);
+
     segmentRefs.current.clear();
     segmentRefCallbacks.current.clear();
 
@@ -3028,9 +3149,15 @@ const UsageLogDetailDrawer = ({
   }, [activeTab]);
 
   useEffect(() => {
+    if (activeTab !== 'messages') {
+      setMessageDetailOpen(false);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     setActiveHitUid('');
     setActiveHitIndex(0);
-  }, [activeTab, searchQueryLower]);
+  }, [searchQueryLower]);
 
   const handleModeChange = (next) => {
     const value =
@@ -3058,12 +3185,7 @@ const UsageLogDetailDrawer = ({
   }, []);
 
   const getDrawerScrollEl = useCallback(() => {
-    if (typeof document === 'undefined') {
-      return null;
-    }
-    return document.querySelector(
-      '.usage-log-detail-drawer .semi-sidesheet-body',
-    );
+    return mainScrollRef.current;
   }, []);
 
   const scrollToSegmentUid = useCallback(
@@ -3082,17 +3204,17 @@ const UsageLogDetailDrawer = ({
         return false;
       }
 
-      const container = getDrawerScrollEl();
-      const headerHeight = stickyHeaderRef.current
-        ? stickyHeaderRef.current.getBoundingClientRect().height
-        : 0;
+      const container =
+        (typeof el.closest === 'function'
+          ? el.closest('[data-usage-scroll-container]')
+          : null) || getDrawerScrollEl();
 
       if (container) {
         const elRect = el.getBoundingClientRect();
         const containerRect = container.getBoundingClientRect();
         const top = elRect.top - containerRect.top + container.scrollTop;
         container.scrollTo({
-          top: Math.max(0, top - headerHeight - 8),
+          top: Math.max(0, top - 8),
           behavior: 'smooth',
         });
         return true;
@@ -3285,9 +3407,9 @@ const UsageLogDetailDrawer = ({
       setActiveHitIndex(index);
       setActiveHitUid(hit.segmentUid);
       setHitPulseNonce((n) => n + 1);
-      scrollToSegmentUid(hit.segmentUid);
+      setPendingJumpUid(hit.segmentUid);
     },
-    [hitList, scrollToSegmentUid],
+    [hitList],
   );
 
   const goToNextHit = useCallback(() => {
@@ -3312,18 +3434,58 @@ const UsageLogDetailDrawer = ({
     if (!pendingJumpUid) {
       return;
     }
-    const ok = scrollToSegmentUid(pendingJumpUid);
-    if (ok) {
-      setPendingJumpUid('');
-      return;
+
+    const meta = parseSegmentUid(pendingJumpUid);
+    if (meta) {
+      if (activeTab !== 'messages') {
+        setActiveTab('messages');
+        return;
+      }
+
+      const isSelected =
+        selectedMessageMeta?.source === meta.source &&
+        selectedMessageMeta?.messageIndex === meta.messageIndex;
+      if (!isSelected) {
+        setSelectedMessageMeta({ source: meta.source, messageIndex: meta.messageIndex });
+        return;
+      }
+
+      if (isMobile && !messageDetailOpen) {
+        setMessageDetailOpen(true);
+        return;
+      }
     }
-    const id = requestAnimationFrame(() => {
+
+    let attempts = 0;
+    let rafId = 0;
+    const maxAttempts = 12;
+
+    const tryScroll = () => {
+      attempts += 1;
+
       if (scrollToSegmentUid(pendingJumpUid)) {
         setPendingJumpUid('');
+        return;
       }
-    });
-    return () => cancelAnimationFrame(id);
-  }, [pendingJumpUid, scrollToSegmentUid]);
+
+      if (attempts >= maxAttempts) {
+        setPendingJumpUid('');
+        return;
+      }
+
+      rafId = requestAnimationFrame(tryScroll);
+    };
+
+    tryScroll();
+    return () => cancelAnimationFrame(rafId);
+  }, [
+    activeTab,
+    isMobile,
+    messageDetailOpen,
+    pendingJumpUid,
+    scrollToSegmentUid,
+    selectedMessageMeta,
+  ]);
 
   useEffect(() => {
     if (!visible || viewMode !== 'formatted') {
@@ -3340,6 +3502,11 @@ const UsageLogDetailDrawer = ({
       }
 
       if (key === 'Escape') {
+        if (isMobile && messageDetailOpen) {
+          setMessageDetailOpen(false);
+          e.preventDefault();
+          return;
+        }
         if (toolsFilterOpen) {
           setToolsFilterOpen(false);
           e.preventDefault();
@@ -3390,7 +3557,9 @@ const UsageLogDetailDrawer = ({
     goToNextHit,
     goToPrevHit,
     hitCount,
+    isMobile,
     isSearchComposing,
+    messageDetailOpen,
     onClose,
     onlyMatches,
     searchQueryLower,
@@ -3436,13 +3605,19 @@ const UsageLogDetailDrawer = ({
       bodyStyle={{
         padding: isMobile ? '0 12px 12px 12px' : '0 24px 16px 24px',
         height: '100%',
-        overflow: 'auto',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
-      <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
+      <Space
+        vertical
+        align='start'
+        style={{ width: '100%', gap: 0, flex: 1, minHeight: 0, overflow: 'hidden' }}
+      >
         {viewMode === 'formatted' ? (
           <>
-            <div className='sticky top-0 z-10 w-full' ref={stickyHeaderRef}>
+            <div className='w-full shrink-0' ref={stickyHeaderRef}>
               <Tabs
                 type='line'
                 activeKey={activeTab}
@@ -3588,7 +3763,12 @@ const UsageLogDetailDrawer = ({
               </div>
             </div>
 
-            {activeTab === 'overview' && (
+            <div
+              ref={mainScrollRef}
+              className='flex-1 min-h-0 overflow-auto w-full'
+              data-usage-scroll-container='main'
+            >
+              {activeTab === 'overview' && (
               <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
                 <div className='grid grid-cols-1 md:grid-cols-2 gap-3 w-full'>
                   <div className='rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] p-3'>
@@ -3772,245 +3952,340 @@ const UsageLogDetailDrawer = ({
             )}
 
             {activeTab === 'messages' && (
-              <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
-                <div ref={reqMsgsRef} style={{ width: '100%' }}>
-                  <Text strong>{t('请求消息')}</Text>
-                  <div className='mt-2'>
-                    <Space
-                      vertical
-                      align='start'
-                      style={{ width: '100%', gap: 12 }}
-                    >
-                      {(() => {
-                        const items = visibleRequestMessageItems;
-                        if (!items || items.length === 0) {
-                          return (
-                            <Text type='tertiary'>
-                              {shouldFilterBySearch
-                                ? t('无匹配结果')
-                                : t('该请求没有消息内容')}
-                            </Text>
-                          );
-                        }
-                        return items.map((item) => {
-                          const message = item?.message;
-                          if (!message) {
-                            return null;
+              <div className='relative w-full h-full min-h-0 overflow-hidden'>
+                <div className='flex w-full h-full min-h-0 overflow-hidden'>
+                  <div
+                    className={`flex flex-col min-h-0 gap-3 ${isMobile ? 'w-full' : 'w-[380px] flex-none'}`}
+                  >
+                    <div ref={reqMsgsRef} className='flex flex-col min-h-0 flex-[7]'>
+                      <div className='shrink-0 flex items-center justify-between'>
+                        <Text strong>{t('请求消息')}</Text>
+                      </div>
+                      <div className='flex-1 min-h-0 overflow-auto rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)]'>
+                        {(() => {
+                          const items = visibleRequestMessageItems;
+                          if (!items || items.length === 0) {
+                            return (
+                              <div className='p-3'>
+                                <Text type='tertiary'>
+                                  {shouldFilterBySearch
+                                    ? t('无匹配结果')
+                                    : t('该请求没有消息内容')}
+                                </Text>
+                              </div>
+                            );
                           }
-                          return (
-                            <div
-                              key={`request-msg-${item.messageIndex}`}
-                              className='group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] px-3 py-2 w-full'
-                            >
-                              <Space
-                                align='center'
-                                style={{
-                                  width: '100%',
-                                  justifyContent: 'space-between',
-                                }}
+
+                          return items.map((item) => {
+                            const message = item?.message;
+                            if (!message) {
+                              return null;
+                            }
+
+                            const isSelected =
+                              selectedMessageMeta?.source === item.source &&
+                              selectedMessageMeta?.messageIndex === item.messageIndex;
+                            const summary = getMessageCompactSummary(message);
+
+                            return (
+                              <button
+                                key={`request-compact-${item.messageIndex}`}
+                                type='button'
+                                className={`w-full flex items-center gap-2 px-2 h-10 text-left border-b border-[var(--semi-color-border)] last:border-b-0 ${isSelected ? 'bg-[var(--semi-color-fill-1)]' : 'hover:bg-[var(--semi-color-fill-0)]'}`}
+                                onClick={() =>
+                                  openMessageDetail(item.source, item.messageIndex)
+                                }
                               >
-                                <Tag type='ghost' color='purple'>
-                                  {message.role}
-                                </Tag>
-                                <div className='flex items-center gap-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'>
-                                  <Tooltip content={t('复制全文')}>
-                                    <Button
-                                      size='small'
-                                      theme='borderless'
-                                      icon={<IconCopy />}
-                                      aria-label={t('复制全文')}
-                                      onClick={() =>
-                                        handleCopyMessage(message, 'full')
-                                      }
-                                    />
-                                  </Tooltip>
-                                  <Dropdown
-                                    position='bottomRight'
-                                    render={
-                                      <Dropdown.Menu>
-                                        <Dropdown.Item
-                                          onClick={() =>
-                                            handleCopyMessage(message, 'full')
-                                          }
-                                        >
-                                          {t('复制全文')}
-                                        </Dropdown.Item>
-                                        <Dropdown.Item
-                                          onClick={() =>
-                                            handleCopyMessage(message, 'plain')
-                                          }
-                                        >
-                                          {t('仅复制文本')}
-                                        </Dropdown.Item>
-                                        <Dropdown.Item
-                                          onClick={() =>
-                                            handleCopyMessage(message, 'tools')
-                                          }
-                                        >
-                                          {t('仅复制工具')}
-                                        </Dropdown.Item>
-                                        <Dropdown.Item
-                                          onClick={() =>
-                                            handleCopyMessage(
-                                              message,
-                                              'markdown',
-                                            )
-                                          }
-                                        >
-                                          {t('复制为 Markdown')}
-                                        </Dropdown.Item>
-                                      </Dropdown.Menu>
+                                <div className='w-20 flex-none overflow-hidden'>
+                                  <Tag type='ghost' color='purple'>
+                                    {message.role}
+                                  </Tag>
+                                </div>
+                                <div className='flex-1 min-w-0 truncate text-sm'>
+                                  {summary ? (
+                                    summary
+                                  ) : (
+                                    <span className='text-[var(--semi-color-text-2)]'>
+                                      {t('暂无内容')}
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+
+                    <div ref={respMsgsRef} className='flex flex-col min-h-0 flex-[3]'>
+                      <div className='shrink-0 flex items-center justify-between'>
+                        <Text strong>{t('响应消息')}</Text>
+                      </div>
+                      <div className='flex-1 min-h-0 overflow-auto rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)]'>
+                        {(() => {
+                          const items = visibleResponseMessageItems;
+                          if (!items || items.length === 0) {
+                            return (
+                              <div className='p-3'>
+                                <Text type='tertiary'>
+                                  {shouldFilterBySearch
+                                    ? t('无匹配结果')
+                                    : t('该响应没有消息内容')}
+                                </Text>
+                              </div>
+                            );
+                          }
+
+                          return items.map((item) => {
+                            const message = item?.message;
+                            if (!message) {
+                              return null;
+                            }
+
+                            const isSelected =
+                              selectedMessageMeta?.source === item.source &&
+                              selectedMessageMeta?.messageIndex === item.messageIndex;
+                            const summary = getMessageCompactSummary(message);
+
+                            return (
+                              <button
+                                key={`response-compact-${item.messageIndex}`}
+                                type='button'
+                                className={`w-full flex items-center gap-2 px-2 h-10 text-left border-b border-[var(--semi-color-border)] last:border-b-0 ${isSelected ? 'bg-[var(--semi-color-fill-1)]' : 'hover:bg-[var(--semi-color-fill-0)]'}`}
+                                onClick={() =>
+                                  openMessageDetail(item.source, item.messageIndex)
+                                }
+                              >
+                                <div className='w-20 flex-none overflow-hidden'>
+                                  <Tag type='ghost' color='blue'>
+                                    {message.role}
+                                  </Tag>
+                                </div>
+                                <div className='flex-1 min-w-0 truncate text-sm'>
+                                  {summary ? (
+                                    summary
+                                  ) : (
+                                    <span className='text-[var(--semi-color-text-2)]'>
+                                      {t('暂无内容')}
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {!isMobile ? (
+                    <div className='flex flex-col min-h-0 flex-1 min-w-0 border-l border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)]'>
+                      <div className='shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--semi-color-border)]'>
+                        <div className='flex items-center gap-2 min-w-0'>
+                          {selectedMessage ? (
+                            <Tag
+                              type='ghost'
+                              color={
+                                selectedMessageMeta?.source === 'request'
+                                  ? 'purple'
+                                  : 'blue'
+                              }
+                            >
+                              {selectedMessage.role}
+                            </Tag>
+                          ) : (
+                            <Text type='tertiary'>{t('请选择一条消息')}</Text>
+                          )}
+                        </div>
+                        {selectedMessage ? (
+                          <div className='flex items-center gap-0'>
+                            <Tooltip content={t('复制全文')}>
+                              <Button
+                                size='small'
+                                theme='borderless'
+                                icon={<IconCopy />}
+                                aria-label={t('复制全文')}
+                                onClick={() =>
+                                  handleCopyMessage(selectedMessage, 'full')
+                                }
+                              />
+                            </Tooltip>
+                            <Dropdown
+                              position='bottomRight'
+                              render={
+                                <Dropdown.Menu>
+                                  <Dropdown.Item
+                                    onClick={() =>
+                                      handleCopyMessage(selectedMessage, 'full')
                                     }
                                   >
-                                    <Button
-                                      size='small'
-                                      theme='borderless'
-                                      icon={<IconChevronDown />}
-                                      aria-label={t('更多复制选项')}
-                                    />
-                                  </Dropdown>
-                                </div>
-                              </Space>
-                              <div className='mt-2' style={{ width: '100%' }}>
-                                <MessageContent
-                                  message={message}
-                                  t={t}
-                                  highlightQuery={effectiveSearchQuery}
-                                  source={item.source}
-                                  messageIndex={item.messageIndex}
-                                  registerSegmentRef={registerSegmentRef}
-                                  activeHitUid={activeHitUid}
-                                  hitPulseNonce={hitPulseNonce}
-                                />
-                              </div>
-                            </div>
-                          );
-                        });
-                      })()}
-                    </Space>
-                  </div>
-                </div>
-
-                <Divider style={{ width: '100%' }} />
-
-                <div ref={respMsgsRef} style={{ width: '100%' }}>
-                  <Text strong>{t('响应消息')}</Text>
-                  <div className='mt-2'>
-                    <Space
-                      vertical
-                      align='start'
-                      style={{ width: '100%', gap: 12 }}
-                    >
-                      {(() => {
-                        const items = visibleResponseMessageItems;
-                        if (!items || items.length === 0) {
-                          return (
-                            <Text type='tertiary'>
-                              {shouldFilterBySearch
-                                ? t('无匹配结果')
-                                : t('该响应没有消息内容')}
-                            </Text>
-                          );
-                        }
-                        return items.map((item) => {
-                          const message = item?.message;
-                          if (!message) {
-                            return null;
-                          }
-                          return (
-                            <div
-                              key={`response-msg-${item.messageIndex}`}
-                              className='group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] px-3 py-2 w-full'
-                            >
-                              <Space
-                                align='center'
-                                style={{
-                                  width: '100%',
-                                  justifyContent: 'space-between',
-                                }}
-                              >
-                                <Tag type='ghost' color='blue'>
-                                  {message.role}
-                                </Tag>
-                                <div className='flex items-center gap-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'>
-                                  <Tooltip content={t('复制全文')}>
-                                    <Button
-                                      size='small'
-                                      theme='borderless'
-                                      icon={<IconCopy />}
-                                      aria-label={t('复制全文')}
-                                      onClick={() =>
-                                        handleCopyMessage(message, 'full')
-                                      }
-                                    />
-                                  </Tooltip>
-                                  <Dropdown
-                                    position='bottomRight'
-                                    render={
-                                      <Dropdown.Menu>
-                                        <Dropdown.Item
-                                          onClick={() =>
-                                            handleCopyMessage(message, 'full')
-                                          }
-                                        >
-                                          {t('复制全文')}
-                                        </Dropdown.Item>
-                                        <Dropdown.Item
-                                          onClick={() =>
-                                            handleCopyMessage(message, 'plain')
-                                          }
-                                        >
-                                          {t('仅复制文本')}
-                                        </Dropdown.Item>
-                                        <Dropdown.Item
-                                          onClick={() =>
-                                            handleCopyMessage(message, 'tools')
-                                          }
-                                        >
-                                          {t('仅复制工具')}
-                                        </Dropdown.Item>
-                                        <Dropdown.Item
-                                          onClick={() =>
-                                            handleCopyMessage(
-                                              message,
-                                              'markdown',
-                                            )
-                                          }
-                                        >
-                                          {t('复制为 Markdown')}
-                                        </Dropdown.Item>
-                                      </Dropdown.Menu>
+                                    {t('复制全文')}
+                                  </Dropdown.Item>
+                                  <Dropdown.Item
+                                    onClick={() =>
+                                      handleCopyMessage(selectedMessage, 'plain')
                                     }
                                   >
-                                    <Button
-                                      size='small'
-                                      theme='borderless'
-                                      icon={<IconChevronDown />}
-                                      aria-label={t('更多复制选项')}
-                                    />
-                                  </Dropdown>
-                                </div>
-                              </Space>
-                              <div className='mt-2' style={{ width: '100%' }}>
-                                <MessageContent
-                                  message={message}
-                                  t={t}
-                                  highlightQuery={effectiveSearchQuery}
-                                  source={item.source}
-                                  messageIndex={item.messageIndex}
-                                  registerSegmentRef={registerSegmentRef}
-                                  activeHitUid={activeHitUid}
-                                  hitPulseNonce={hitPulseNonce}
-                                />
-                              </div>
-                            </div>
-                          );
-                        });
-                      })()}
-                    </Space>
-                  </div>
+                                    {t('仅复制文本')}
+                                  </Dropdown.Item>
+                                  <Dropdown.Item
+                                    onClick={() =>
+                                      handleCopyMessage(selectedMessage, 'tools')
+                                    }
+                                  >
+                                    {t('仅复制工具')}
+                                  </Dropdown.Item>
+                                  <Dropdown.Item
+                                    onClick={() =>
+                                      handleCopyMessage(selectedMessage, 'markdown')
+                                    }
+                                  >
+                                    {t('复制为 Markdown')}
+                                  </Dropdown.Item>
+                                </Dropdown.Menu>
+                              }
+                            >
+                              <Button
+                                size='small'
+                                theme='borderless'
+                                icon={<IconChevronDown />}
+                                aria-label={t('更多复制选项')}
+                              />
+                            </Dropdown>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div
+                        className='flex-1 min-h-0 overflow-auto p-3'
+                        data-usage-scroll-container='detail'
+                      >
+                        {selectedMessage ? (
+                          <MessageContent
+                            message={selectedMessage}
+                            t={t}
+                            highlightQuery={effectiveSearchQuery}
+                            source={selectedMessageMeta.source}
+                            messageIndex={selectedMessageMeta.messageIndex}
+                            registerSegmentRef={registerSegmentRef}
+                            activeHitUid={activeHitUid}
+                            hitPulseNonce={hitPulseNonce}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {isMobile ? (
+                    <div
+                      className={`absolute inset-0 z-20 flex flex-col min-h-0 bg-[var(--semi-color-bg-1)] transition-transform duration-200 ease-out ${messageDetailOpen ? 'translate-x-0 pointer-events-auto' : 'translate-x-full pointer-events-none'}`}
+                    >
+                      <div className='shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--semi-color-border)]'>
+                        <Space align='center' spacing={8}>
+                          <Tooltip content={t('关闭')}>
+                            <Button
+                              size='small'
+                              theme='borderless'
+                              icon={<IconClose />}
+                              aria-label={t('关闭')}
+                              onClick={closeMessageDetail}
+                            />
+                          </Tooltip>
+                          {selectedMessage ? (
+                            <Tag
+                              type='ghost'
+                              color={
+                                selectedMessageMeta?.source === 'request'
+                                  ? 'purple'
+                                  : 'blue'
+                              }
+                            >
+                              {selectedMessage.role}
+                            </Tag>
+                          ) : (
+                            <Text type='tertiary'>{t('请选择一条消息')}</Text>
+                          )}
+                        </Space>
+                        {selectedMessage ? (
+                          <div className='flex items-center gap-0'>
+                            <Tooltip content={t('复制全文')}>
+                              <Button
+                                size='small'
+                                theme='borderless'
+                                icon={<IconCopy />}
+                                aria-label={t('复制全文')}
+                                onClick={() =>
+                                  handleCopyMessage(selectedMessage, 'full')
+                                }
+                              />
+                            </Tooltip>
+                            <Dropdown
+                              position='bottomRight'
+                              render={
+                                <Dropdown.Menu>
+                                  <Dropdown.Item
+                                    onClick={() =>
+                                      handleCopyMessage(selectedMessage, 'full')
+                                    }
+                                  >
+                                    {t('复制全文')}
+                                  </Dropdown.Item>
+                                  <Dropdown.Item
+                                    onClick={() =>
+                                      handleCopyMessage(selectedMessage, 'plain')
+                                    }
+                                  >
+                                    {t('仅复制文本')}
+                                  </Dropdown.Item>
+                                  <Dropdown.Item
+                                    onClick={() =>
+                                      handleCopyMessage(selectedMessage, 'tools')
+                                    }
+                                  >
+                                    {t('仅复制工具')}
+                                  </Dropdown.Item>
+                                  <Dropdown.Item
+                                    onClick={() =>
+                                      handleCopyMessage(selectedMessage, 'markdown')
+                                    }
+                                  >
+                                    {t('复制为 Markdown')}
+                                  </Dropdown.Item>
+                                </Dropdown.Menu>
+                              }
+                            >
+                              <Button
+                                size='small'
+                                theme='borderless'
+                                icon={<IconChevronDown />}
+                                aria-label={t('更多复制选项')}
+                              />
+                            </Dropdown>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div
+                        className='flex-1 min-h-0 overflow-auto p-3'
+                        data-usage-scroll-container='detail'
+                      >
+                        {selectedMessage ? (
+                          <MessageContent
+                            message={selectedMessage}
+                            t={t}
+                            highlightQuery={effectiveSearchQuery}
+                            source={selectedMessageMeta.source}
+                            messageIndex={selectedMessageMeta.messageIndex}
+                            registerSegmentRef={registerSegmentRef}
+                            activeHitUid={activeHitUid}
+                            hitPulseNonce={hitPulseNonce}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              </Space>
+              </div>
             )}
 
             {activeTab === 'metrics' && (
@@ -4235,15 +4510,22 @@ const UsageLogDetailDrawer = ({
                 )}
               </Space>
             )}
+            </div>
           </>
         ) : (
-          <RawView
-            t={t}
-            requestRaw={requestRaw}
-            responseRaw={responseRaw}
-            responseJson={responseJson}
-            streamObjects={streamObjects}
-          />
+          <div
+            ref={mainScrollRef}
+            className='flex-1 min-h-0 overflow-auto w-full'
+            data-usage-scroll-container='main'
+          >
+            <RawView
+              t={t}
+              requestRaw={requestRaw}
+              responseRaw={responseRaw}
+              responseJson={responseJson}
+              streamObjects={streamObjects}
+            />
+          </div>
         )}
       </Space>
     </SideSheet>
