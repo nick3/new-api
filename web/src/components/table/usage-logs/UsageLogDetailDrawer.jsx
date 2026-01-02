@@ -2222,8 +2222,8 @@ const RawView = ({
   })();
 
   return (
-    <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
-      <div style={{ width: '100%' }}>
+    <div className='w-full h-full min-h-0 flex flex-col'>
+      <div className='w-full flex-1 min-h-0 flex flex-col'>
         <Space
           align='center'
           style={{ width: '100%', justifyContent: 'space-between' }}
@@ -2254,13 +2254,12 @@ const RawView = ({
           </Space>
         </Space>
         <pre
-          className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrapReq ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
-          style={{ maxHeight: 'clamp(240px, 45vh, 520px)', overflow: 'auto' }}
+          className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 flex-1 min-h-0 overflow-auto ${wrapReq ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
         >
           {requestText}
         </pre>
       </div>
-      <div style={{ width: '100%' }}>
+      <div className='w-full flex-1 min-h-0 flex flex-col border-t border-[var(--semi-color-border)]'>
         <Space
           align='center'
           style={{ width: '100%', justifyContent: 'space-between' }}
@@ -2291,13 +2290,12 @@ const RawView = ({
           </Space>
         </Space>
         <pre
-          className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrapRes ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
-          style={{ maxHeight: 'clamp(240px, 45vh, 520px)', overflow: 'auto' }}
+          className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 flex-1 min-h-0 overflow-auto ${wrapRes ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
         >
           {responseText}
         </pre>
       </div>
-    </Space>
+    </div>
   );
 };
 
@@ -4668,7 +4666,7 @@ const UsageLogDetailDrawer = ({
         ) : (
           <div
             ref={mainScrollRef}
-            className='flex-1 min-h-0 overflow-auto w-full'
+            className='flex-1 min-h-0 overflow-hidden w-full'
             data-usage-scroll-container='main'
           >
             <RawView
