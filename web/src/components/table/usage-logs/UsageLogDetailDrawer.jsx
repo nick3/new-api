@@ -2829,14 +2829,31 @@ const UsageLogDetailDrawer = ({
         return '';
       }
 
-      const firstLine = (value) => {
+      const normalizePreview = (value, maxLen = 240) => {
         if (value === undefined || value === null) {
           return '';
         }
-        return String(value).split('\n')[0] || '';
+
+        const raw = String(value);
+        const lines = raw.split('\n');
+        const meaningful = lines
+          .map((line) => String(line).trim())
+          .find((line) => line && !/^[\[\]{}],?$/.test(line));
+
+        const picked = meaningful ?? String(lines[0] || '').trim();
+        const collapsed = picked
+          .replace(/\s+/g, ' ')
+          .replace(/,$/, '')
+          .trim();
+
+        if (!collapsed || /^[\[\]{}],?$/.test(collapsed)) {
+          return '';
+        }
+
+        return collapsed.length > maxLen ? collapsed.slice(0, maxLen) : collapsed;
       };
 
-      const fromText = firstLine(message.text).trim();
+      const fromText = normalizePreview(message.text, 320);
       if (fromText) {
         return fromText;
       }
@@ -2848,24 +2865,34 @@ const UsageLogDetailDrawer = ({
       }
 
       if (firstSegment.type === 'text' || firstSegment.type === 'reasoning') {
-        return firstLine(firstSegment.value).trim();
+        return normalizePreview(firstSegment.value, 320);
       }
 
       if (firstSegment.type === 'tool_call') {
         const name = firstSegment.name || firstSegment.id || '';
-        return name ? `${t('工具调用')}: ${name}` : t('工具调用');
+        const head = name ? `${t('工具调用')}: ${name}` : t('工具调用');
+        const preview = normalizePreview(firstSegment.value, 240);
+        return preview ? `${head} · ${preview}` : head;
       }
 
       if (firstSegment.type === 'tool_result') {
         const name = firstSegment.name || firstSegment.id || '';
-        return name ? `${t('工具结果')}: ${name}` : t('工具结果');
+        const head = name ? `${t('工具结果')}: ${name}` : t('工具结果');
+        const preview = normalizePreview(firstSegment.value, 240);
+        return preview ? `${head} · ${preview}` : head;
       }
 
       if (firstSegment.type === 'json') {
         const label = firstSegment.label ? String(firstSegment.label) : '';
-        return label ? `${t('JSON')}: ${label}` : t('JSON');
+        const head = label ? `${t('JSON')}: ${label}` : t('JSON');
+        const preview = normalizePreview(firstSegment.value, 240);
+        return preview ? `${head} · ${preview}` : head;
       }
 
+      const fallback = normalizePreview(firstSegment.value, 240);
+      if (fallback) {
+        return firstSegment.type ? `${firstSegment.type} · ${fallback}` : fallback;
+      }
       return firstSegment.type ? String(firstSegment.type) : '';
     },
     [t],
@@ -4003,7 +4030,7 @@ const UsageLogDetailDrawer = ({
                                 </div>
                                 <div className='flex-1 min-w-0 truncate text-sm'>
                                   {summary ? (
-                                    summary
+                                    renderHighlightedText(summary, effectiveSearchQuery)
                                   ) : (
                                     <span className='text-[var(--semi-color-text-2)]'>
                                       {t('暂无内容')}
@@ -4063,7 +4090,7 @@ const UsageLogDetailDrawer = ({
                                 </div>
                                 <div className='flex-1 min-w-0 truncate text-sm'>
                                   {summary ? (
-                                    summary
+                                    renderHighlightedText(summary, effectiveSearchQuery)
                                   ) : (
                                     <span className='text-[var(--semi-color-text-2)]'>
                                       {t('暂无内容')}
