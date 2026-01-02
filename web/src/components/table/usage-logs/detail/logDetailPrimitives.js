@@ -457,3 +457,79 @@ export const buildMessageCopyText = (message, t) => {
     .filter((text) => text && text.trim())
     .join('\n\n');
 };
+
+export const buildMessageCopyTextByFormat = (message, t, format) => {
+  if (!message) {
+    return '';
+  }
+
+  const fmt = typeof format === 'string' ? format : 'full';
+
+  if (fmt === 'full') {
+    return buildMessageCopyText(message, t);
+  }
+
+  const segments = Array.isArray(message.segments)
+    ? message.segments.filter(Boolean)
+    : [];
+
+  if (fmt === 'plain') {
+    if (segments.length > 0) {
+      return segmentsToPlainText(segments).trim();
+    }
+    return (message.text ?? '').trim();
+  }
+
+  if (fmt === 'tools') {
+    if (segments.length === 0) {
+      return '';
+    }
+    return segments
+      .filter(
+        (segment) => segment?.type === 'tool_call' || segment?.type === 'tool_result',
+      )
+      .map((segment) => getSegmentCopyText(segment, t))
+      .filter((text) => text && text.trim())
+      .join('\n\n');
+  }
+
+  if (fmt === 'markdown') {
+    const lines = [];
+    if (message.role) {
+      lines.push(`**Role:** ${message.role}`);
+    }
+    if (segments.length === 0) {
+      const text = (message.text ?? '').trim();
+      if (text) {
+        lines.push(text);
+      }
+      return lines.join('\n\n').trim();
+    }
+
+    segments.forEach((segment) => {
+      if (!segment) {
+        return;
+      }
+      const copyText = getSegmentCopyText(segment, t).trim();
+      if (!copyText) {
+        return;
+      }
+      if (
+        segment.type === 'tool_call' ||
+        segment.type === 'tool_result' ||
+        segment.type === 'json'
+      ) {
+        lines.push(`\n\n\`\`\`\n${copyText}\n\`\`\``);
+        return;
+      }
+      lines.push(copyText);
+    });
+
+    return lines
+      .join('\n\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  return buildMessageCopyText(message, t);
+};

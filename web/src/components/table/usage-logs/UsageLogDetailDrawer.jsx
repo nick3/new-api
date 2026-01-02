@@ -24,6 +24,7 @@ import React, {
   useRef,
   useEffect,
 } from 'react';
+import { useDebounce } from 'use-debounce';
 import {
   SideSheet,
   Typography,
@@ -37,6 +38,7 @@ import {
   Input,
   Switch,
   Select,
+  Dropdown,
   Tooltip,
   Toast,
   Tabs,
@@ -47,6 +49,8 @@ import {
   IconCopy,
   IconSearch,
   IconFilter,
+  IconChevronUp,
+  IconChevronDown,
 } from '@douyinfe/semi-icons';
 import { copy } from '../../../helpers/utils';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
@@ -109,6 +113,11 @@ const renderHighlightedText = (text, query) => {
     parts.push(raw.slice(start));
   }
   return parts.length > 0 ? <>{parts}</> : raw;
+};
+
+const makeSegmentUid = (source, messageIndex, segmentIndex) => {
+  const prefix = source === 'response' ? 'resp' : 'req';
+  return `${prefix}-m${messageIndex}-s${segmentIndex}`;
 };
 
 const splitStreamingResponse = (raw) => {
@@ -516,6 +525,82 @@ const buildMessageCopyText = (message, t) => {
     .map((segment) => getSegmentCopyText(segment, t))
     .filter((text) => text && text.trim())
     .join('\n\n');
+};
+
+const buildMessageCopyTextByFormat = (message, t, format) => {
+  if (!message) {
+    return '';
+  }
+
+  const fmt = typeof format === 'string' ? format : 'full';
+
+  if (fmt === 'full') {
+    return buildMessageCopyText(message, t);
+  }
+
+  const segments = Array.isArray(message.segments)
+    ? message.segments.filter(Boolean)
+    : [];
+
+  if (fmt === 'plain') {
+    if (segments.length > 0) {
+      return segmentsToPlainText(segments).trim();
+    }
+    return (message.text ?? '').trim();
+  }
+
+  if (fmt === 'tools') {
+    if (segments.length === 0) {
+      return '';
+    }
+    return segments
+      .filter(
+        (segment) => segment?.type === 'tool_call' || segment?.type === 'tool_result',
+      )
+      .map((segment) => getSegmentCopyText(segment, t))
+      .filter((text) => text && text.trim())
+      .join('\n\n');
+  }
+
+  if (fmt === 'markdown') {
+    const lines = [];
+    if (message.role) {
+      lines.push(`**Role:** ${message.role}`);
+    }
+    if (segments.length === 0) {
+      const text = (message.text ?? '').trim();
+      if (text) {
+        lines.push(text);
+      }
+      return lines.join('\n\n').trim();
+    }
+
+    segments.forEach((segment) => {
+      if (!segment) {
+        return;
+      }
+      const copyText = getSegmentCopyText(segment, t).trim();
+      if (!copyText) {
+        return;
+      }
+      if (
+        segment.type === 'tool_call' ||
+        segment.type === 'tool_result' ||
+        segment.type === 'json'
+      ) {
+        lines.push(`\n\n\`\`\`\n${copyText}\n\`\`\``);
+        return;
+      }
+      lines.push(copyText);
+    });
+
+    return lines
+      .join('\n\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  return buildMessageCopyText(message, t);
 };
 
 const appendSegment = (segments, segment) => {
@@ -1584,7 +1669,7 @@ const CollapsibleText = ({
       {isCode ? (
         <pre
           className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrap ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
-          style={{ maxHeight: 320, overflow: 'auto' }}
+          style={{ maxHeight: 'clamp(240px, 35vh, 320px)', overflow: 'auto' }}
         >
           {rendered}
         </pre>
@@ -1772,169 +1857,297 @@ const ParamsGrid = ({ data, t }) => {
   );
 };
 
-const MessageSegmentView = ({ segment, t, highlightQuery = '' }) => {
+const MessageSegmentView = ({
+  segment,
+  t,
+  highlightQuery = '',
+  segmentUid = '',
+  registerSegmentRef,
+  activeHitUid = '',
+  hitPulseNonce = 0,
+}) => {
   if (!segment) {
     return null;
   }
 
-  switch (segment.type) {
-    case 'text':
-      return (
-        <CollapsibleText
-          text={segment.value}
-          t={t}
-          highlightQuery={highlightQuery}
-        />
-      );
-    case 'reasoning':
-      return (
-        <div className='w-full flex flex-col gap-1'>
-          <Text type='tertiary'>{t('思考过程')}</Text>
-          <CollapsibleText
-            text={segment.value}
-            t={t}
-            highlightQuery={highlightQuery}
-          />
-        </div>
-      );
-    case 'tool_call':
-      return (
-        <div className='w-full flex flex-col gap-2 rounded-md border border-dashed border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2'>
-          <Space align='center' wrap spacing={8}>
-            <Text strong>{t('工具调用')}</Text>
-            {segment.name ? (
-              <Tag type='ghost' color='orange'>
-                {segment.name}
-              </Tag>
-            ) : null}
-            {segment.id ? (
-              <Tag type='ghost' color='yellow'>
-                {t('ID')}: {segment.id}
-              </Tag>
-            ) : null}
-            <Tooltip content={t('复制')}>
-              <Button
-                size='small'
-                theme='borderless'
-                icon={<IconCopy />}
-                aria-label={t('复制')}
-                onClick={async () => {
-                  const ok = await copyToClipboard(
-                    getSegmentCopyText(segment, t),
-                  );
-                  if (ok) {
-                    Toast.success(t('消息已复制到剪贴板'));
-                  } else {
-                    Toast.error(t('无法复制到剪贴板，请手动复制'));
-                  }
-                }}
-              />
-            </Tooltip>
-          </Space>
-          {(() => {
-            const parsed = safeParseJson(segment.value);
-            if (parsed && typeof parsed === 'object') {
-              return (
-                <JsonViewer
-                  data={parsed}
-                  t={t}
-                  highlightQuery={highlightQuery}
+  const isActive = Boolean(segmentUid) && segmentUid === activeHitUid;
+  const animationName =
+    hitPulseNonce % 2 === 0 ? 'usageHitPulseA' : 'usageHitPulseB';
+
+  const content = (() => {
+    switch (segment.type) {
+      case 'text':
+        return (
+          <div className='w-full relative'>
+            <div className='absolute top-0 right-0 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'>
+              <Tooltip content={t('复制')}>
+                <Button
+                  size='small'
+                  theme='borderless'
+                  icon={<IconCopy />}
+                  aria-label={t('复制')}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(
+                      getSegmentCopyText(segment, t),
+                    );
+                    if (ok) {
+                      Toast.success(t('消息已复制到剪贴板'));
+                    } else {
+                      Toast.error(t('无法复制到剪贴板，请手动复制'));
+                    }
+                  }}
                 />
-              );
-            }
-            return (
+              </Tooltip>
+            </div>
+            <div className='pr-8'>
               <CollapsibleText
                 text={segment.value}
                 t={t}
-                isCode
                 highlightQuery={highlightQuery}
               />
-            );
-          })()}
-        </div>
-      );
-    case 'tool_result':
-      return (
-        <div className='w-full flex flex-col gap-2 rounded-md border border-dashed border-[var(--semi-color-border)] bg-[var(--semi-color-fill-1)] px-3 py-2'>
-          <Space align='center' wrap spacing={8}>
-            <Text strong>{t('工具结果')}</Text>
-            {segment.name ? (
-              <Tag type='ghost' color='green'>
-                {segment.name}
-              </Tag>
-            ) : null}
-            {segment.id ? (
-              <Tag type='ghost' color='lime'>
-                {t('ID')}: {segment.id}
-              </Tag>
-            ) : null}
-            <Tooltip content={t('复制')}>
-              <Button
-                size='small'
-                theme='borderless'
-                icon={<IconCopy />}
-                aria-label={t('复制')}
-                onClick={async () => {
-                  const ok = await copyToClipboard(
-                    getSegmentCopyText(segment, t),
-                  );
-                  if (ok) {
-                    Toast.success(t('消息已复制到剪贴板'));
-                  } else {
-                    Toast.error(t('无法复制到剪贴板，请手动复制'));
-                  }
-                }}
-              />
-            </Tooltip>
-          </Space>
+            </div>
+          </div>
+        );
+      case 'reasoning':
+        return (
+          <div className='w-full flex flex-col gap-1'>
+            <Space
+              align='center'
+              style={{ width: '100%', justifyContent: 'space-between' }}
+            >
+              <Text type='tertiary'>{t('思考过程')}</Text>
+              <Tooltip content={t('复制')}>
+                <Button
+                  size='small'
+                  theme='borderless'
+                  icon={<IconCopy />}
+                  aria-label={t('复制')}
+                  className='opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'
+                  onClick={async () => {
+                    const ok = await copyToClipboard(
+                      getSegmentCopyText(segment, t),
+                    );
+                    if (ok) {
+                      Toast.success(t('消息已复制到剪贴板'));
+                    } else {
+                      Toast.error(t('无法复制到剪贴板，请手动复制'));
+                    }
+                  }}
+                />
+              </Tooltip>
+            </Space>
+            <CollapsibleText
+              text={segment.value}
+              t={t}
+              highlightQuery={highlightQuery}
+            />
+          </div>
+        );
+      case 'tool_call':
+        return (
+          <div className='w-full flex flex-col gap-2 rounded-md border border-dashed border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2'>
+            <Space align='center' wrap spacing={8}>
+              <Text strong>{t('工具调用')}</Text>
+              {segment.name ? (
+                <Tag type='ghost' color='orange'>
+                  {segment.name}
+                </Tag>
+              ) : null}
+              {segment.id ? (
+                <Tag type='ghost' color='yellow'>
+                  {t('ID')}: {segment.id}
+                </Tag>
+              ) : null}
+              <Tooltip content={t('复制')}>
+                <Button
+                  size='small'
+                  theme='borderless'
+                  icon={<IconCopy />}
+                  aria-label={t('复制')}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(
+                      getSegmentCopyText(segment, t),
+                    );
+                    if (ok) {
+                      Toast.success(t('消息已复制到剪贴板'));
+                    } else {
+                      Toast.error(t('无法复制到剪贴板，请手动复制'));
+                    }
+                  }}
+                />
+              </Tooltip>
+            </Space>
+            {(() => {
+              const parsed = safeParseJson(segment.value);
+              if (parsed && typeof parsed === 'object') {
+                return (
+                  <JsonViewer
+                    data={parsed}
+                    t={t}
+                    highlightQuery={highlightQuery}
+                  />
+                );
+              }
+              return (
+                <CollapsibleText
+                  text={segment.value}
+                  t={t}
+                  isCode
+                  highlightQuery={highlightQuery}
+                />
+              );
+            })()}
+          </div>
+        );
+      case 'tool_result':
+        return (
+          <div className='w-full flex flex-col gap-2 rounded-md border border-dashed border-[var(--semi-color-border)] bg-[var(--semi-color-fill-1)] px-3 py-2'>
+            <Space align='center' wrap spacing={8}>
+              <Text strong>{t('工具结果')}</Text>
+              {segment.name ? (
+                <Tag type='ghost' color='green'>
+                  {segment.name}
+                </Tag>
+              ) : null}
+              {segment.id ? (
+                <Tag type='ghost' color='lime'>
+                  {t('ID')}: {segment.id}
+                </Tag>
+              ) : null}
+              <Tooltip content={t('复制')}>
+                <Button
+                  size='small'
+                  theme='borderless'
+                  icon={<IconCopy />}
+                  aria-label={t('复制')}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(
+                      getSegmentCopyText(segment, t),
+                    );
+                    if (ok) {
+                      Toast.success(t('消息已复制到剪贴板'));
+                    } else {
+                      Toast.error(t('无法复制到剪贴板，请手动复制'));
+                    }
+                  }}
+                />
+              </Tooltip>
+            </Space>
+            <CollapsibleText
+              text={segment.value}
+              t={t}
+              isCode
+              highlightQuery={highlightQuery}
+            />
+          </div>
+        );
+      case 'json':
+        return (
+          <div className='w-full flex flex-col gap-1'>
+            <Space
+              align='center'
+              style={{ width: '100%', justifyContent: 'space-between' }}
+            >
+              {segment.label ? (
+                <Text type='tertiary'>{t(segment.label)}</Text>
+              ) : (
+                <span />
+              )}
+              <Tooltip content={t('复制')}>
+                <Button
+                  size='small'
+                  theme='borderless'
+                  icon={<IconCopy />}
+                  aria-label={t('复制')}
+                  className='opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'
+                  onClick={async () => {
+                    const ok = await copyToClipboard(
+                      getSegmentCopyText(segment, t),
+                    );
+                    if (ok) {
+                      Toast.success(t('消息已复制到剪贴板'));
+                    } else {
+                      Toast.error(t('无法复制到剪贴板，请手动复制'));
+                    }
+                  }}
+                />
+              </Tooltip>
+            </Space>
+            <CollapsibleText
+              text={segment.value}
+              t={t}
+              isCode
+              highlightQuery={highlightQuery}
+            />
+          </div>
+        );
+      default:
+        return (
           <CollapsibleText
-            text={segment.value}
+            text={segment.value ?? ''}
             t={t}
-            isCode
             highlightQuery={highlightQuery}
           />
-        </div>
-      );
-    case 'json':
-      return (
-        <div className='w-full flex flex-col gap-1'>
-          {segment.label ? (
-            <Text type='tertiary'>{t(segment.label)}</Text>
-          ) : null}
-          <CollapsibleText
-            text={segment.value}
-            t={t}
-            isCode
-            highlightQuery={highlightQuery}
-          />
-        </div>
-      );
-    default:
-      return (
-        <CollapsibleText
-          text={segment.value ?? ''}
-          t={t}
-          highlightQuery={highlightQuery}
-        />
-      );
-  }
+        );
+    }
+  })();
+
+  return (
+    <div
+      id={segmentUid ? `usage-seg-${segmentUid}` : undefined}
+      data-usage-seg={segmentUid || undefined}
+      ref={
+        segmentUid && registerSegmentRef
+          ? registerSegmentRef(segmentUid)
+          : undefined
+      }
+      className='w-full group'
+      style={
+        isActive
+          ? {
+              animation: `${animationName} 900ms ease-out 1`,
+              borderRadius: 8,
+            }
+          : undefined
+      }
+    >
+      {content}
+    </div>
+  );
 };
 
-const MessageContent = ({ message, t, highlightQuery = '' }) => {
+const MessageContent = ({
+  message,
+  t,
+  highlightQuery = '',
+  source,
+  messageIndex,
+  registerSegmentRef,
+  activeHitUid,
+  hitPulseNonce = 0,
+}) => {
   if (!message) {
     return null;
   }
-  const segments = Array.isArray(message.segments)
-    ? message.segments.filter(Boolean)
-    : [];
 
-  if (segments.length === 0) {
+  const segmentsRaw = Array.isArray(message.segments) ? message.segments : [];
+  const hasMeta =
+    (source === 'request' || source === 'response') &&
+    typeof messageIndex === 'number';
+
+  if (segmentsRaw.length === 0) {
     if (message.text && message.text.trim()) {
+      const pseudoSegment = { type: 'text', value: message.text };
+      const segmentUid = hasMeta ? makeSegmentUid(source, messageIndex, 0) : '';
       return (
-        <CollapsibleText
-          text={message.text}
+        <MessageSegmentView
+          segment={pseudoSegment}
           t={t}
           highlightQuery={highlightQuery}
+          segmentUid={segmentUid}
+          registerSegmentRef={registerSegmentRef}
+          activeHitUid={activeHitUid}
+          hitPulseNonce={hitPulseNonce}
         />
       );
     }
@@ -1943,14 +2156,28 @@ const MessageContent = ({ message, t, highlightQuery = '' }) => {
 
   return (
     <Space vertical align='start' style={{ width: '100%' }} spacing={12}>
-      {segments.map((segment, index) => (
-        <MessageSegmentView
-          key={`segment-${segment.type}-${index}`}
-          segment={segment}
-          t={t}
-          highlightQuery={highlightQuery}
-        />
-      ))}
+      {segmentsRaw.map((segment, segmentIndex) => {
+        if (!segment) {
+          return null;
+        }
+
+        const segmentUid = hasMeta
+          ? makeSegmentUid(source, messageIndex, segmentIndex)
+          : '';
+
+        return (
+          <MessageSegmentView
+            key={segmentUid || `segment-${segment.type}-${segmentIndex}`}
+            segment={segment}
+            t={t}
+            highlightQuery={highlightQuery}
+            segmentUid={segmentUid}
+            registerSegmentRef={registerSegmentRef}
+            activeHitUid={activeHitUid}
+            hitPulseNonce={hitPulseNonce}
+          />
+        );
+      })}
     </Space>
   );
 };
@@ -2011,7 +2238,7 @@ const RawView = ({
         </Space>
         <pre
           className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrapReq ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
-          style={{ maxHeight: 320, overflow: 'auto' }}
+          style={{ maxHeight: 'clamp(240px, 35vh, 320px)', overflow: 'auto' }}
         >
           {requestText}
         </pre>
@@ -2048,7 +2275,7 @@ const RawView = ({
         </Space>
         <pre
           className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrapRes ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
-          style={{ maxHeight: 320, overflow: 'auto' }}
+          style={{ maxHeight: 'clamp(240px, 35vh, 320px)', overflow: 'auto' }}
         >
           {responseText}
         </pre>
@@ -2069,6 +2296,64 @@ const JsonNode = ({ label, value, t, depth = 0, highlightQuery = '' }) => {
   });
   const isComplex =
     Array.isArray(value) || (value && typeof value === 'object');
+
+  const queryLower = normalizeSearchQuery(highlightQuery);
+
+  useEffect(() => {
+    if (!queryLower || !isComplex || !collapsed) {
+      return;
+    }
+
+    const labelText =
+      label !== undefined && label !== null ? String(label).toLowerCase() : '';
+    if (labelText && labelText.includes(queryLower)) {
+      setCollapsed(false);
+      return;
+    }
+
+    let visited = 0;
+    const maxNodes = 800;
+    const maxDepth = 10;
+
+    const walk = (val, currentDepth) => {
+      if (visited > maxNodes || currentDepth > maxDepth) {
+        return false;
+      }
+      visited += 1;
+
+      if (val === undefined || val === null) {
+        return false;
+      }
+
+      if (typeof val === 'string') {
+        return val.toLowerCase().includes(queryLower);
+      }
+
+      if (typeof val === 'number' || typeof val === 'boolean') {
+        return String(val).toLowerCase().includes(queryLower);
+      }
+
+      if (Array.isArray(val)) {
+        return val.some((item) => walk(item, currentDepth + 1));
+      }
+
+      if (typeof val === 'object') {
+        return Object.entries(val).some(([k, v]) => {
+          if (String(k).toLowerCase().includes(queryLower)) {
+            return true;
+          }
+          return walk(v, currentDepth + 1);
+        });
+      }
+
+      return false;
+    };
+
+    if (walk(value, depth)) {
+      setCollapsed(false);
+    }
+  }, [depth, isComplex, label, queryLower, value]);
+
   return (
     <div className='w-full'>
       <Space align='center' spacing={8} style={{ marginBottom: 8 }}>
@@ -2475,10 +2760,37 @@ const UsageLogDetailDrawer = ({
   const reqMsgsRef = useRef(null);
   const respOverviewRef = useRef(null);
   const respMsgsRef = useRef(null);
+  const stickyHeaderRef = useRef(null);
+
+  const segmentRefs = useRef(new Map());
+  const segmentRefCallbacks = useRef(new Map());
+  const registerSegmentRef = useCallback((segmentUid) => {
+    if (!segmentUid) {
+      return undefined;
+    }
+    const cached = segmentRefCallbacks.current.get(segmentUid);
+    if (cached) {
+      return cached;
+    }
+    const cb = (node) => {
+      if (node) {
+        segmentRefs.current.set(segmentUid, node);
+      } else {
+        segmentRefs.current.delete(segmentUid);
+      }
+    };
+    segmentRefCallbacks.current.set(segmentUid, cb);
+    return cb;
+  }, []);
+
+  const [activeHitUid, setActiveHitUid] = useState('');
+  const [activeHitIndex, setActiveHitIndex] = useState(0);
+  const [hitPulseNonce, setHitPulseNonce] = useState(0);
+  const [pendingJumpUid, setPendingJumpUid] = useState('');
 
   const handleCopyMessage = useCallback(
-    async (message) => {
-      const copyText = buildMessageCopyText(message, t);
+    async (message, format = 'full') => {
+      const copyText = buildMessageCopyTextByFormat(message, t, format);
       if (!copyText) {
         Toast.warning(t('暂无数据'));
         return;
@@ -2520,47 +2832,43 @@ const UsageLogDetailDrawer = ({
     return (searchValue || '').trim();
   }, [isSearchComposing, searchValue]);
 
+  const [debouncedSearchQuery] = useDebounce(searchQuery, 150);
+  const effectiveSearchQuery = useMemo(
+    () => (searchQuery ? debouncedSearchQuery : ''),
+    [debouncedSearchQuery, searchQuery],
+  );
+
   const searchQueryLower = useMemo(
-    () => normalizeSearchQuery(searchQuery),
-    [searchQuery],
+    () => normalizeSearchQuery(effectiveSearchQuery),
+    [effectiveSearchQuery],
   );
   const shouldFilterBySearch = Boolean(searchQueryLower) && onlyMatches;
 
-  const visibleRequestMessages = useMemo(() => {
-    if (!shouldFilterBySearch) {
-      return requestMessages;
-    }
-    return (requestMessages || []).filter((message) => {
-      if (!message) {
-        return false;
-      }
-      if (includesSearch(message.role, searchQueryLower)) {
-        return true;
-      }
-      if (includesSearch(message.text, searchQueryLower)) {
-        return true;
-      }
-      const segments = Array.isArray(message.segments) ? message.segments : [];
-      return segments.some((segment) => {
-        if (!segment) {
-          return false;
-        }
-        return (
-          includesSearch(segment.type, searchQueryLower) ||
-          includesSearch(segment.name, searchQueryLower) ||
-          includesSearch(segment.id, searchQueryLower) ||
-          includesSearch(segment.label, searchQueryLower) ||
-          includesSearch(segment.value, searchQueryLower)
-        );
-      });
-    });
-  }, [requestMessages, searchQueryLower, shouldFilterBySearch]);
+  const requestMessageItems = useMemo(
+    () =>
+      (requestMessages || []).map((message, messageIndex) => ({
+        message,
+        source: 'request',
+        messageIndex,
+      })),
+    [requestMessages],
+  );
 
-  const visibleResponseMessages = useMemo(() => {
+  const responseMessageItems = useMemo(
+    () =>
+      (responseMessages || []).map((message, messageIndex) => ({
+        message,
+        source: 'response',
+        messageIndex,
+      })),
+    [responseMessages],
+  );
+
+  const visibleRequestMessageItems = useMemo(() => {
     if (!shouldFilterBySearch) {
-      return responseMessages;
+      return requestMessageItems;
     }
-    return (responseMessages || []).filter((message) => {
+    return (requestMessageItems || []).filter(({ message }) => {
       if (!message) {
         return false;
       }
@@ -2584,7 +2892,37 @@ const UsageLogDetailDrawer = ({
         );
       });
     });
-  }, [responseMessages, searchQueryLower, shouldFilterBySearch]);
+  }, [requestMessageItems, searchQueryLower, shouldFilterBySearch]);
+
+  const visibleResponseMessageItems = useMemo(() => {
+    if (!shouldFilterBySearch) {
+      return responseMessageItems;
+    }
+    return (responseMessageItems || []).filter(({ message }) => {
+      if (!message) {
+        return false;
+      }
+      if (includesSearch(message.role, searchQueryLower)) {
+        return true;
+      }
+      if (includesSearch(message.text, searchQueryLower)) {
+        return true;
+      }
+      const segments = Array.isArray(message.segments) ? message.segments : [];
+      return segments.some((segment) => {
+        if (!segment) {
+          return false;
+        }
+        return (
+          includesSearch(segment.type, searchQueryLower) ||
+          includesSearch(segment.name, searchQueryLower) ||
+          includesSearch(segment.id, searchQueryLower) ||
+          includesSearch(segment.label, searchQueryLower) ||
+          includesSearch(segment.value, searchQueryLower)
+        );
+      });
+    });
+  }, [responseMessageItems, searchQueryLower, shouldFilterBySearch]);
 
   const visibleToolInvocations = useMemo(() => {
     if (!shouldFilterBySearch) {
@@ -2669,6 +3007,14 @@ const UsageLogDetailDrawer = ({
     setOnlyMatches(false);
     setIsSearchComposing(false);
 
+    setActiveHitUid('');
+    setActiveHitIndex(0);
+    setHitPulseNonce(0);
+    setPendingJumpUid('');
+
+    segmentRefs.current.clear();
+    segmentRefCallbacks.current.clear();
+
     setToolsFilterOpen(false);
     setFilterToolName('');
     setFilterCallId('');
@@ -2681,6 +3027,11 @@ const UsageLogDetailDrawer = ({
     }
   }, [activeTab]);
 
+  useEffect(() => {
+    setActiveHitUid('');
+    setActiveHitIndex(0);
+  }, [activeTab, searchQueryLower]);
+
   const handleModeChange = (next) => {
     const value =
       typeof next === 'string'
@@ -2692,6 +3043,362 @@ const UsageLogDetailDrawer = ({
       onViewModeChange(value);
     }
   };
+
+  const focusSearchInput = useCallback(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const el = document.querySelector('#usage-log-detail-search input');
+    if (el && typeof el.focus === 'function') {
+      el.focus();
+      if (typeof el.select === 'function') {
+        el.select();
+      }
+    }
+  }, []);
+
+  const getDrawerScrollEl = useCallback(() => {
+    if (typeof document === 'undefined') {
+      return null;
+    }
+    return document.querySelector(
+      '.usage-log-detail-drawer .semi-sidesheet-body',
+    );
+  }, []);
+
+  const scrollToSegmentUid = useCallback(
+    (segmentUid) => {
+      if (!segmentUid) {
+        return false;
+      }
+
+      const el =
+        segmentRefs.current.get(segmentUid) ||
+        (typeof document !== 'undefined'
+          ? document.getElementById(`usage-seg-${segmentUid}`)
+          : null);
+
+      if (!el) {
+        return false;
+      }
+
+      const container = getDrawerScrollEl();
+      const headerHeight = stickyHeaderRef.current
+        ? stickyHeaderRef.current.getBoundingClientRect().height
+        : 0;
+
+      if (container) {
+        const elRect = el.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const top = elRect.top - containerRect.top + container.scrollTop;
+        container.scrollTo({
+          top: Math.max(0, top - headerHeight - 8),
+          behavior: 'smooth',
+        });
+        return true;
+      }
+
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return true;
+    },
+    [getDrawerScrollEl],
+  );
+
+  const hitList = useMemo(() => {
+    if (!searchQueryLower) {
+      return [];
+    }
+
+    const matchesSegment = (segment) => {
+      if (!segment) {
+        return false;
+      }
+      return (
+        includesSearch(segment.type, searchQueryLower) ||
+        includesSearch(segment.name, searchQueryLower) ||
+        includesSearch(segment.id, searchQueryLower) ||
+        includesSearch(segment.label, searchQueryLower) ||
+        includesSearch(segment.value, searchQueryLower)
+      );
+    };
+
+    const hits = [];
+
+    if (activeTab === 'messages') {
+      const collectFromItems = (items) => {
+        (items || []).forEach((item) => {
+          const message = item?.message;
+          if (!message) {
+            return;
+          }
+
+          const segments = Array.isArray(message.segments) ? message.segments : [];
+          const source = item.source;
+          const messageIndex = item.messageIndex;
+
+          let matchedSegments = 0;
+          segments.forEach((segment, segmentIndex) => {
+            if (!segment) {
+              return;
+            }
+            if (!matchesSegment(segment)) {
+              return;
+            }
+            matchedSegments += 1;
+            hits.push({
+              segmentUid: makeSegmentUid(source, messageIndex, segmentIndex),
+              source,
+              messageIndex,
+              segmentIndex,
+            });
+          });
+
+          if (matchedSegments > 0) {
+            return;
+          }
+
+          if (
+            includesSearch(message.role, searchQueryLower) ||
+            includesSearch(message.text, searchQueryLower)
+          ) {
+            const firstIndex = segments.findIndex(Boolean);
+            const segmentIndex = firstIndex >= 0 ? firstIndex : 0;
+            hits.push({
+              segmentUid: makeSegmentUid(source, messageIndex, segmentIndex),
+              source,
+              messageIndex,
+              segmentIndex,
+            });
+          }
+        });
+      };
+
+      collectFromItems(visibleRequestMessageItems);
+      collectFromItems(visibleResponseMessageItems);
+      return hits;
+    }
+
+    if (activeTab === 'tools') {
+      (filteredToolInvocations || []).forEach((inv) => {
+        if (!inv) {
+          return;
+        }
+        const results = Array.isArray(inv.results) ? inv.results : [];
+
+        let matched = 0;
+        const call = inv.call;
+        if (call?.segment && matchesSegment(call.segment)) {
+          matched += 1;
+          hits.push({
+            segmentUid: makeSegmentUid(call.source, call.messageIndex, call.segmentIndex),
+            source: call.source,
+            messageIndex: call.messageIndex,
+            segmentIndex: call.segmentIndex,
+          });
+        }
+        results.forEach((item) => {
+          const seg = item?.segment;
+          if (!seg || !matchesSegment(seg)) {
+            return;
+          }
+          matched += 1;
+          hits.push({
+            segmentUid: makeSegmentUid(item.source, item.messageIndex, item.segmentIndex),
+            source: item.source,
+            messageIndex: item.messageIndex,
+            segmentIndex: item.segmentIndex,
+          });
+        });
+
+        if (matched > 0) {
+          return;
+        }
+
+        if (
+          includesSearch(inv.id, searchQueryLower) ||
+          includesSearch(inv.name, searchQueryLower)
+        ) {
+          const target = call || results.find(Boolean);
+          if (!target) {
+            return;
+          }
+          hits.push({
+            segmentUid: makeSegmentUid(target.source, target.messageIndex, target.segmentIndex),
+            source: target.source,
+            messageIndex: target.messageIndex,
+            segmentIndex: target.segmentIndex,
+          });
+        }
+      });
+      return hits;
+    }
+
+    if (activeTab === 'stream') {
+      const text = (Array.isArray(streamObjects) ? streamObjects : [])
+        .map((obj) => JSON.stringify(obj, null, 2))
+        .join('\n\n');
+      if (includesSearch(text, searchQueryLower)) {
+        return [
+          { segmentUid: 'stream', source: 'response', messageIndex: 0, segmentIndex: 0 },
+        ];
+      }
+      return [];
+    }
+
+    return [];
+  }, [
+    activeTab,
+    filteredToolInvocations,
+    searchQueryLower,
+    streamObjects,
+    visibleRequestMessageItems,
+    visibleResponseMessageItems,
+  ]);
+
+  const hitCount = hitList.length;
+  const hitPositionText =
+    hitCount > 0 && activeHitUid
+      ? `${activeHitIndex + 1}/${hitCount}`
+      : `0/${hitCount}`;
+
+  useEffect(() => {
+    if (!activeHitUid) {
+      return;
+    }
+    const idx = hitList.findIndex((hit) => hit.segmentUid === activeHitUid);
+    if (idx === -1) {
+      setActiveHitUid('');
+      setActiveHitIndex(0);
+      return;
+    }
+    if (idx !== activeHitIndex) {
+      setActiveHitIndex(idx);
+    }
+  }, [activeHitIndex, activeHitUid, hitList]);
+
+  const goToHitIndex = useCallback(
+    (index) => {
+      const hit = hitList[index];
+      if (!hit) {
+        return;
+      }
+      setActiveHitIndex(index);
+      setActiveHitUid(hit.segmentUid);
+      setHitPulseNonce((n) => n + 1);
+      scrollToSegmentUid(hit.segmentUid);
+    },
+    [hitList, scrollToSegmentUid],
+  );
+
+  const goToNextHit = useCallback(() => {
+    if (hitCount === 0) {
+      return;
+    }
+    const current = activeHitUid ? activeHitIndex : -1;
+    const nextIndex = (current + 1) % hitCount;
+    goToHitIndex(nextIndex);
+  }, [activeHitIndex, activeHitUid, goToHitIndex, hitCount]);
+
+  const goToPrevHit = useCallback(() => {
+    if (hitCount === 0) {
+      return;
+    }
+    const current = activeHitUid ? activeHitIndex : 0;
+    const prevIndex = (current - 1 + hitCount) % hitCount;
+    goToHitIndex(prevIndex);
+  }, [activeHitIndex, activeHitUid, goToHitIndex, hitCount]);
+
+  useEffect(() => {
+    if (!pendingJumpUid) {
+      return;
+    }
+    const ok = scrollToSegmentUid(pendingJumpUid);
+    if (ok) {
+      setPendingJumpUid('');
+      return;
+    }
+    const id = requestAnimationFrame(() => {
+      if (scrollToSegmentUid(pendingJumpUid)) {
+        setPendingJumpUid('');
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pendingJumpUid, scrollToSegmentUid]);
+
+  useEffect(() => {
+    if (!visible || viewMode !== 'formatted') {
+      return;
+    }
+
+    const onKeyDown = (e) => {
+      const key = e.key;
+
+      if ((e.metaKey || e.ctrlKey) && String(key).toLowerCase() === 'f') {
+        e.preventDefault();
+        focusSearchInput();
+        return;
+      }
+
+      if (key === 'Escape') {
+        if (toolsFilterOpen) {
+          setToolsFilterOpen(false);
+          e.preventDefault();
+          return;
+        }
+        if (searchValue || onlyMatches) {
+          setSearchValue('');
+          setOnlyMatches(false);
+          e.preventDefault();
+          return;
+        }
+        onClose?.();
+        e.preventDefault();
+        return;
+      }
+
+      if (isSearchComposing) {
+        return;
+      }
+
+      if (key === 'Enter') {
+        if (!searchQueryLower || hitCount === 0) {
+          return;
+        }
+
+        const tag = e.target?.tagName?.toLowerCase();
+        const isTextInput = tag === 'input' || tag === 'textarea';
+        if (isTextInput) {
+          const inSearch = e.target?.closest?.('#usage-log-detail-search');
+          if (!inSearch) {
+            return;
+          }
+        }
+
+        e.preventDefault();
+        if (e.shiftKey) {
+          goToPrevHit();
+        } else {
+          goToNextHit();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [
+    focusSearchInput,
+    goToNextHit,
+    goToPrevHit,
+    hitCount,
+    isSearchComposing,
+    onClose,
+    onlyMatches,
+    searchQueryLower,
+    searchValue,
+    toolsFilterOpen,
+    viewMode,
+    visible,
+  ]);
 
   return (
     <SideSheet
@@ -2735,7 +3442,7 @@ const UsageLogDetailDrawer = ({
       <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
         {viewMode === 'formatted' ? (
           <>
-            <div className='sticky top-0 z-10 w-full'>
+            <div className='sticky top-0 z-10 w-full' ref={stickyHeaderRef}>
               <Tabs
                 type='line'
                 activeKey={activeTab}
@@ -2766,7 +3473,7 @@ const UsageLogDetailDrawer = ({
                     justifyContent: 'space-between',
                   }}
                 >
-                  <div style={{ flex: 1 }}>
+                  <div id='usage-log-detail-search' style={{ flex: 1 }}>
                     <Input
                       prefix={<IconSearch />}
                       placeholder={t('搜索消息/工具/JSON')}
@@ -2779,6 +3486,33 @@ const UsageLogDetailDrawer = ({
                     />
                   </div>
                   <Space align='center' spacing={8}>
+                    {searchQuery ? (
+                      <>
+                        <Tag type='ghost' color='cyan'>
+                          {t('命中')}: {hitCount} ({hitPositionText})
+                        </Tag>
+                        <Tooltip content={t('上一处')}>
+                          <Button
+                            size='small'
+                            theme='borderless'
+                            icon={<IconChevronUp />}
+                            aria-label={t('上一处')}
+                            disabled={hitCount === 0}
+                            onClick={goToPrevHit}
+                          />
+                        </Tooltip>
+                        <Tooltip content={t('下一处')}>
+                          <Button
+                            size='small'
+                            theme='borderless'
+                            icon={<IconChevronDown />}
+                            aria-label={t('下一处')}
+                            disabled={hitCount === 0}
+                            onClick={goToNextHit}
+                          />
+                        </Tooltip>
+                      </>
+                    ) : null}
                     <Text type='tertiary'>{t('仅看命中')}</Text>
                     <Switch checked={onlyMatches} onChange={setOnlyMatches} />
                     {activeTab === 'tools' ? (
@@ -3048,8 +3782,8 @@ const UsageLogDetailDrawer = ({
                       style={{ width: '100%', gap: 12 }}
                     >
                       {(() => {
-                        const messages = visibleRequestMessages;
-                        if (!messages || messages.length === 0) {
+                        const items = visibleRequestMessageItems;
+                        if (!items || items.length === 0) {
                           return (
                             <Text type='tertiary'>
                               {shouldFilterBySearch
@@ -3058,38 +3792,100 @@ const UsageLogDetailDrawer = ({
                             </Text>
                           );
                         }
-                        return messages.map((message, index) => (
-                          <div
-                            key={`request-msg-${index}`}
-                            className='relative group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] px-3 py-2 w-full'
-                          >
-                            <Space
-                              align='start'
-                              style={{ width: '100%', gap: 12 }}
+                        return items.map((item) => {
+                          const message = item?.message;
+                          if (!message) {
+                            return null;
+                          }
+                          return (
+                            <div
+                              key={`request-msg-${item.messageIndex}`}
+                              className='group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] px-3 py-2 w-full'
                             >
-                              <Tag type='ghost' color='purple'>
-                                {message.role}
-                              </Tag>
-                              <div style={{ flex: 1, width: '100%' }}>
+                              <Space
+                                align='center'
+                                style={{
+                                  width: '100%',
+                                  justifyContent: 'space-between',
+                                }}
+                              >
+                                <Tag type='ghost' color='purple'>
+                                  {message.role}
+                                </Tag>
+                                <div className='flex items-center gap-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'>
+                                  <Tooltip content={t('复制全文')}>
+                                    <Button
+                                      size='small'
+                                      theme='borderless'
+                                      icon={<IconCopy />}
+                                      aria-label={t('复制全文')}
+                                      onClick={() =>
+                                        handleCopyMessage(message, 'full')
+                                      }
+                                    />
+                                  </Tooltip>
+                                  <Dropdown
+                                    position='bottomRight'
+                                    render={
+                                      <Dropdown.Menu>
+                                        <Dropdown.Item
+                                          onClick={() =>
+                                            handleCopyMessage(message, 'full')
+                                          }
+                                        >
+                                          {t('复制全文')}
+                                        </Dropdown.Item>
+                                        <Dropdown.Item
+                                          onClick={() =>
+                                            handleCopyMessage(message, 'plain')
+                                          }
+                                        >
+                                          {t('仅复制文本')}
+                                        </Dropdown.Item>
+                                        <Dropdown.Item
+                                          onClick={() =>
+                                            handleCopyMessage(message, 'tools')
+                                          }
+                                        >
+                                          {t('仅复制工具')}
+                                        </Dropdown.Item>
+                                        <Dropdown.Item
+                                          onClick={() =>
+                                            handleCopyMessage(
+                                              message,
+                                              'markdown',
+                                            )
+                                          }
+                                        >
+                                          {t('复制为 Markdown')}
+                                        </Dropdown.Item>
+                                      </Dropdown.Menu>
+                                    }
+                                  >
+                                    <Button
+                                      size='small'
+                                      theme='borderless'
+                                      icon={<IconChevronDown />}
+                                      aria-label={t('更多复制选项')}
+                                    />
+                                  </Dropdown>
+                                </div>
+                              </Space>
+                              <div className='mt-2' style={{ width: '100%' }}>
                                 <MessageContent
                                   message={message}
                                   t={t}
-                                  highlightQuery={searchQuery}
+                                  highlightQuery={effectiveSearchQuery}
+                                  source={item.source}
+                                  messageIndex={item.messageIndex}
+                                  registerSegmentRef={registerSegmentRef}
+                                  activeHitUid={activeHitUid}
+                                  hitPulseNonce={hitPulseNonce}
                                 />
                               </div>
-                            </Space>
-                            <Tooltip content={t('复制')}>
-                              <Button
-                                size='small'
-                                theme='borderless'
-                                icon={<IconCopy />}
-                                aria-label={t('复制')}
-                                className='absolute top-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'
-                                onClick={() => handleCopyMessage(message)}
-                              />
-                            </Tooltip>
-                          </div>
-                        ));
+                            </div>
+                          );
+                        });
                       })()}
                     </Space>
                   </div>
@@ -3106,8 +3902,8 @@ const UsageLogDetailDrawer = ({
                       style={{ width: '100%', gap: 12 }}
                     >
                       {(() => {
-                        const messages = visibleResponseMessages;
-                        if (!messages || messages.length === 0) {
+                        const items = visibleResponseMessageItems;
+                        if (!items || items.length === 0) {
                           return (
                             <Text type='tertiary'>
                               {shouldFilterBySearch
@@ -3116,38 +3912,100 @@ const UsageLogDetailDrawer = ({
                             </Text>
                           );
                         }
-                        return messages.map((message, index) => (
-                          <div
-                            key={`response-msg-${index}`}
-                            className='relative group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] px-3 py-2 w-full'
-                          >
-                            <Space
-                              align='start'
-                              style={{ width: '100%', gap: 12 }}
+                        return items.map((item) => {
+                          const message = item?.message;
+                          if (!message) {
+                            return null;
+                          }
+                          return (
+                            <div
+                              key={`response-msg-${item.messageIndex}`}
+                              className='group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] px-3 py-2 w-full'
                             >
-                              <Tag type='ghost' color='blue'>
-                                {message.role}
-                              </Tag>
-                              <div style={{ flex: 1, width: '100%' }}>
+                              <Space
+                                align='center'
+                                style={{
+                                  width: '100%',
+                                  justifyContent: 'space-between',
+                                }}
+                              >
+                                <Tag type='ghost' color='blue'>
+                                  {message.role}
+                                </Tag>
+                                <div className='flex items-center gap-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'>
+                                  <Tooltip content={t('复制全文')}>
+                                    <Button
+                                      size='small'
+                                      theme='borderless'
+                                      icon={<IconCopy />}
+                                      aria-label={t('复制全文')}
+                                      onClick={() =>
+                                        handleCopyMessage(message, 'full')
+                                      }
+                                    />
+                                  </Tooltip>
+                                  <Dropdown
+                                    position='bottomRight'
+                                    render={
+                                      <Dropdown.Menu>
+                                        <Dropdown.Item
+                                          onClick={() =>
+                                            handleCopyMessage(message, 'full')
+                                          }
+                                        >
+                                          {t('复制全文')}
+                                        </Dropdown.Item>
+                                        <Dropdown.Item
+                                          onClick={() =>
+                                            handleCopyMessage(message, 'plain')
+                                          }
+                                        >
+                                          {t('仅复制文本')}
+                                        </Dropdown.Item>
+                                        <Dropdown.Item
+                                          onClick={() =>
+                                            handleCopyMessage(message, 'tools')
+                                          }
+                                        >
+                                          {t('仅复制工具')}
+                                        </Dropdown.Item>
+                                        <Dropdown.Item
+                                          onClick={() =>
+                                            handleCopyMessage(
+                                              message,
+                                              'markdown',
+                                            )
+                                          }
+                                        >
+                                          {t('复制为 Markdown')}
+                                        </Dropdown.Item>
+                                      </Dropdown.Menu>
+                                    }
+                                  >
+                                    <Button
+                                      size='small'
+                                      theme='borderless'
+                                      icon={<IconChevronDown />}
+                                      aria-label={t('更多复制选项')}
+                                    />
+                                  </Dropdown>
+                                </div>
+                              </Space>
+                              <div className='mt-2' style={{ width: '100%' }}>
                                 <MessageContent
                                   message={message}
                                   t={t}
-                                  highlightQuery={searchQuery}
+                                  highlightQuery={effectiveSearchQuery}
+                                  source={item.source}
+                                  messageIndex={item.messageIndex}
+                                  registerSegmentRef={registerSegmentRef}
+                                  activeHitUid={activeHitUid}
+                                  hitPulseNonce={hitPulseNonce}
                                 />
                               </div>
-                            </Space>
-                            <Tooltip content={t('复制')}>
-                              <Button
-                                size='small'
-                                theme='borderless'
-                                icon={<IconCopy />}
-                                aria-label={t('复制')}
-                                className='absolute top-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'
-                                onClick={() => handleCopyMessage(message)}
-                              />
-                            </Tooltip>
-                          </div>
-                        ));
+                            </div>
+                          );
+                        });
                       })()}
                     </Space>
                   </div>
@@ -3266,35 +4124,46 @@ const UsageLogDetailDrawer = ({
                             size='small'
                             theme='borderless'
                             onClick={() => {
-                              const source =
-                                invocation.call?.source || results[0]?.source;
-                              if (!source) {
+                              const target = invocation.call || results[0];
+                              if (!target) {
                                 return;
                               }
+
+                              const targetUid = makeSegmentUid(
+                                target.source,
+                                target.messageIndex,
+                                target.segmentIndex,
+                              );
+
+                              setOnlyMatches(false);
                               setActiveTab('messages');
-                              setTimeout(() => {
-                                const ref =
-                                  source === 'request'
-                                    ? reqMsgsRef
-                                    : respMsgsRef;
-                                ref?.current?.scrollIntoView({
-                                  behavior: 'smooth',
-                                  block: 'start',
-                                });
-                              }, 0);
+                              setActiveHitUid(targetUid);
+                              setHitPulseNonce((n) => n + 1);
+                              setPendingJumpUid(targetUid);
                             }}
                           >
                             {t('查看上下文')}
                           </Button>
                         </Space>
 
-                        <div className='mt-3'>
+                        <div className='mt-3 pl-4 border-l border-[var(--semi-color-border)]'>
                           {hasCall ? (
-                            <MessageSegmentView
-                              segment={invocation.call.segment}
-                              t={t}
-                              highlightQuery={searchQuery}
-                            />
+                            <div className='relative'>
+                              <div className='absolute -left-[11px] top-3 h-2 w-2 rounded-full bg-[var(--semi-color-primary)]' />
+                              <MessageSegmentView
+                                segment={invocation.call.segment}
+                                t={t}
+                                highlightQuery={effectiveSearchQuery}
+                                segmentUid={makeSegmentUid(
+                                  invocation.call.source,
+                                  invocation.call.messageIndex,
+                                  invocation.call.segmentIndex,
+                                )}
+                                registerSegmentRef={registerSegmentRef}
+                                activeHitUid={activeHitUid}
+                                hitPulseNonce={hitPulseNonce}
+                              />
+                            </div>
                           ) : (
                             <Text type='tertiary'>
                               {t('未找到对应的工具调用')}
@@ -3303,14 +4172,27 @@ const UsageLogDetailDrawer = ({
 
                           {results.length > 0 ? (
                             <div className='mt-2 flex flex-col gap-2'>
-                              {results.map((item, ridx) => (
-                                <MessageSegmentView
-                                  key={`tool-result-${invocation.id}-${ridx}`}
-                                  segment={item.segment}
-                                  t={t}
-                                  highlightQuery={searchQuery}
-                                />
-                              ))}
+                              {results.map((item) => {
+                                const segmentUid = makeSegmentUid(
+                                  item.source,
+                                  item.messageIndex,
+                                  item.segmentIndex,
+                                );
+                                return (
+                                  <div key={segmentUid} className='relative'>
+                                    <div className='absolute -left-[11px] top-3 h-2 w-2 rounded-full bg-[var(--semi-color-success)]' />
+                                    <MessageSegmentView
+                                      segment={item.segment}
+                                      t={t}
+                                      highlightQuery={effectiveSearchQuery}
+                                      segmentUid={segmentUid}
+                                      registerSegmentRef={registerSegmentRef}
+                                      activeHitUid={activeHitUid}
+                                      hitPulseNonce={hitPulseNonce}
+                                    />
+                                  </div>
+                                );
+                              })}
                             </div>
                           ) : null}
                         </div>
@@ -3324,15 +4206,30 @@ const UsageLogDetailDrawer = ({
             {activeTab === 'stream' && (
               <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
                 {Array.isArray(streamObjects) && streamObjects.length > 0 ? (
-                  <CollapsibleText
-                    text={streamObjects
-                      .map((obj) => JSON.stringify(obj, null, 2))
-                      .join('\n\n')}
-                    t={t}
-                    isCode
-                    maxLines={12}
-                    highlightQuery={searchQuery}
-                  />
+                  <div
+                    id='usage-seg-stream'
+                    data-usage-seg='stream'
+                    ref={registerSegmentRef('stream')}
+                    className='w-full'
+                    style={
+                      activeHitUid === 'stream'
+                        ? {
+                            animation: `${hitPulseNonce % 2 === 0 ? 'usageHitPulseA' : 'usageHitPulseB'} 900ms ease-out 1`,
+                            borderRadius: 8,
+                          }
+                        : undefined
+                    }
+                  >
+                    <CollapsibleText
+                      text={streamObjects
+                        .map((obj) => JSON.stringify(obj, null, 2))
+                        .join('\n\n')}
+                      t={t}
+                      isCode
+                      maxLines={12}
+                      highlightQuery={effectiveSearchQuery}
+                    />
+                  </div>
                 ) : (
                   <Text type='tertiary'>{t('暂无流式数据')}</Text>
                 )}
