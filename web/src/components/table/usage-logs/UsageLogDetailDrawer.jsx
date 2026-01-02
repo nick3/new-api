@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useMemo, useState, useRef } from 'react';
+import React, {
+  useCallback,
+  useMemo,
+  useState,
+  useRef,
+  useEffect,
+} from 'react';
 import {
   SideSheet,
   Typography,
@@ -28,55 +34,81 @@ import {
   Radio,
   Tag,
   Button,
+  Input,
+  Switch,
+  Select,
   Tooltip,
   Toast,
   Tabs,
   Collapse,
 } from '@douyinfe/semi-ui';
-import { IconClose, IconCopy } from '@douyinfe/semi-icons';
+import {
+  IconClose,
+  IconCopy,
+  IconSearch,
+  IconFilter,
+} from '@douyinfe/semi-icons';
+import { copy } from '../../../helpers/utils';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import {
+  safeParseJson,
+  decodeUnicodeEscapes,
+  formatJsonString,
+} from './detail/logDetailPrimitives';
 
 const { Title, Text, Paragraph } = Typography;
 
-const safeParseJson = (raw) => {
-  if (!raw || typeof raw !== 'string') {
-    return null;
+const normalizeSearchQuery = (raw) =>
+  typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+
+const includesSearch = (value, queryLower) => {
+  if (!queryLower) {
+    return true;
   }
-  try {
-    return JSON.parse(raw);
-  } catch (error) {
-    return null;
+  if (value === undefined || value === null) {
+    return false;
   }
+  return String(value).toLowerCase().includes(queryLower);
 };
 
-const decodeUnicodeEscapes = (raw) => {
-  if (typeof raw !== 'string') {
+const renderHighlightedText = (text, query) => {
+  const raw = String(text ?? '');
+  const q = normalizeSearchQuery(query);
+  if (!q) {
     return raw;
   }
-  if (!/(\\u[0-9a-fA-F]{4})|(\\n)|(\\r)|(\\t)/.test(raw)) {
-    return raw;
+  const lower = raw.toLowerCase();
+  const parts = [];
+  let start = 0;
+  let matchIndex = 0;
+  while (true) {
+    const idx = lower.indexOf(q, start);
+    if (idx === -1) {
+      break;
+    }
+    if (idx > start) {
+      parts.push(raw.slice(start, idx));
+    }
+    const matched = raw.slice(idx, idx + q.length);
+    parts.push(
+      <mark
+        key={`hit-${matchIndex}`}
+        style={{
+          background: 'var(--semi-color-primary-light-default)',
+          borderRadius: 4,
+          padding: '0 2px',
+        }}
+      >
+        {matched}
+      </mark>,
+    );
+    matchIndex += 1;
+    start = idx + q.length;
   }
-  let output = raw.replace(/\\u([0-9a-fA-F]{4})/g, (_, code) =>
-    String.fromCharCode(parseInt(code, 16)),
-  );
-  output = output.replace(/\\n/g, '\n');
-  output = output.replace(/\\r/g, '\r');
-  output = output.replace(/\\t/g, '\t');
-  return output;
-};
-
-const formatJsonString = (raw) => {
-  if (!raw || typeof raw !== 'string') {
-    return '';
+  if (start < raw.length) {
+    parts.push(raw.slice(start));
   }
-  const parsed = safeParseJson(raw);
-  if (!parsed) {
-    return raw.trim();
-  }
-  try {
-    return JSON.stringify(parsed, null, 2);
-  } catch (error) {
-    return raw.trim();
-  }
+  return parts.length > 0 ? <>{parts}</> : raw;
 };
 
 const splitStreamingResponse = (raw) => {
@@ -422,41 +454,7 @@ const copyToClipboard = async (text) => {
     return false;
   }
 
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return true;
-  }
-
-  if (typeof document === 'undefined') {
-    return false;
-  }
-
-  try {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'absolute';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-
-    const selection = document.getSelection();
-    const selectedRange =
-      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-
-    textarea.select();
-    const succeeded = document.execCommand('copy');
-
-    document.body.removeChild(textarea);
-
-    if (selectedRange && selection) {
-      selection.removeAllRanges();
-      selection.addRange(selectedRange);
-    }
-
-    return succeeded;
-  } catch (error) {
-    return false;
-  }
+  return copy(text);
 };
 
 const getSegmentCopyText = (segment, t) => {
@@ -811,7 +809,10 @@ const aggregateResponsesStreamEvents = (events) => {
     if (!key || typeof fragment !== 'string') {
       return;
     }
-    functionCallArgsByKey.set(key, (functionCallArgsByKey.get(key) || '') + fragment);
+    functionCallArgsByKey.set(
+      key,
+      (functionCallArgsByKey.get(key) || '') + fragment,
+    );
   };
 
   const upsertOutputItem = (outputIndexRaw, item) => {
@@ -907,7 +908,10 @@ const aggregateResponsesStreamEvents = (events) => {
       latestResponse = event.response;
     }
 
-    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+    if (
+      type === 'response.output_item.added' ||
+      type === 'response.output_item.done'
+    ) {
       const outputIndex =
         event.output_index ??
         event.outputIndex ??
@@ -1041,12 +1045,15 @@ const aggregateResponsesStreamEvents = (events) => {
             const outputIndex = Number(key.slice('output_index:'.length));
             return {
               type: 'function_call',
-              output_index: Number.isFinite(outputIndex) ? outputIndex : undefined,
+              output_index: Number.isFinite(outputIndex)
+                ? outputIndex
+                : undefined,
               name: 'function_call',
               arguments: value,
             };
           });
-  const effectiveOutput = patchedOutput.length > 0 ? patchedOutput : syntheticOutput;
+  const effectiveOutput =
+    patchedOutput.length > 0 ? patchedOutput : syntheticOutput;
 
   if (effectiveOutput.length > 0) {
     const message = {
@@ -1075,7 +1082,11 @@ const aggregateResponsesStreamEvents = (events) => {
             : latestResponse?.output_texts !== undefined
               ? normaliseContent(latestResponse.output_texts)
               : '';
-    if (fallbackText && typeof fallbackText === 'string' && fallbackText.trim()) {
+    if (
+      fallbackText &&
+      typeof fallbackText === 'string' &&
+      fallbackText.trim()
+    ) {
       return {
         role: latestResponse?.role || 'assistant',
         content: fallbackText,
@@ -1533,9 +1544,30 @@ const buildRequestParams = (requestObject, t) => {
   return params;
 };
 
-const CollapsibleText = ({ text, t, isCode = false, maxLines = 6 }) => {
+const CollapsibleText = ({
+  text,
+  t,
+  isCode = false,
+  maxLines = 6,
+  highlightQuery = '',
+  autoExpandOnSearch = true,
+}) => {
   const [expanded, setExpanded] = useState(false);
   const [wrap, setWrap] = useState(true);
+
+  const queryLower = normalizeSearchQuery(highlightQuery);
+  const canAutoExpand =
+    Boolean(autoExpandOnSearch) &&
+    Boolean(queryLower) &&
+    typeof text === 'string' &&
+    text.toLowerCase().includes(queryLower);
+
+  useEffect(() => {
+    if (canAutoExpand) {
+      setExpanded(true);
+    }
+  }, [canAutoExpand]);
+
   if (!text || text.trim() === '') {
     return <Text type='tertiary'>{t('暂无数据')}</Text>;
   }
@@ -1545,6 +1577,8 @@ const CollapsibleText = ({ text, t, isCode = false, maxLines = 6 }) => {
   const displayedText =
     shouldTruncate && !expanded ? lines.slice(0, maxLines).join('\n') : text;
 
+  const rendered = renderHighlightedText(displayedText, highlightQuery);
+
   return (
     <div className='flex flex-col gap-2 w-full'>
       {isCode ? (
@@ -1552,11 +1586,11 @@ const CollapsibleText = ({ text, t, isCode = false, maxLines = 6 }) => {
           className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrap ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
           style={{ maxHeight: 320, overflow: 'auto' }}
         >
-          {displayedText}
+          {rendered}
         </pre>
       ) : (
         <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-          {displayedText}
+          {rendered}
         </Paragraph>
       )}
       <Space>
@@ -1738,19 +1772,29 @@ const ParamsGrid = ({ data, t }) => {
   );
 };
 
-const MessageSegmentView = ({ segment, t }) => {
+const MessageSegmentView = ({ segment, t, highlightQuery = '' }) => {
   if (!segment) {
     return null;
   }
 
   switch (segment.type) {
     case 'text':
-      return <CollapsibleText text={segment.value} t={t} />;
+      return (
+        <CollapsibleText
+          text={segment.value}
+          t={t}
+          highlightQuery={highlightQuery}
+        />
+      );
     case 'reasoning':
       return (
         <div className='w-full flex flex-col gap-1'>
           <Text type='tertiary'>{t('思考过程')}</Text>
-          <CollapsibleText text={segment.value} t={t} />
+          <CollapsibleText
+            text={segment.value}
+            t={t}
+            highlightQuery={highlightQuery}
+          />
         </div>
       );
     case 'tool_call':
@@ -1790,9 +1834,22 @@ const MessageSegmentView = ({ segment, t }) => {
           {(() => {
             const parsed = safeParseJson(segment.value);
             if (parsed && typeof parsed === 'object') {
-              return <JsonViewer data={parsed} t={t} />;
+              return (
+                <JsonViewer
+                  data={parsed}
+                  t={t}
+                  highlightQuery={highlightQuery}
+                />
+              );
             }
-            return <CollapsibleText text={segment.value} t={t} isCode />;
+            return (
+              <CollapsibleText
+                text={segment.value}
+                t={t}
+                isCode
+                highlightQuery={highlightQuery}
+              />
+            );
           })()}
         </div>
       );
@@ -1830,7 +1887,12 @@ const MessageSegmentView = ({ segment, t }) => {
               />
             </Tooltip>
           </Space>
-          <CollapsibleText text={segment.value} t={t} isCode />
+          <CollapsibleText
+            text={segment.value}
+            t={t}
+            isCode
+            highlightQuery={highlightQuery}
+          />
         </div>
       );
     case 'json':
@@ -1839,15 +1901,26 @@ const MessageSegmentView = ({ segment, t }) => {
           {segment.label ? (
             <Text type='tertiary'>{t(segment.label)}</Text>
           ) : null}
-          <CollapsibleText text={segment.value} t={t} isCode />
+          <CollapsibleText
+            text={segment.value}
+            t={t}
+            isCode
+            highlightQuery={highlightQuery}
+          />
         </div>
       );
     default:
-      return <CollapsibleText text={segment.value ?? ''} t={t} />;
+      return (
+        <CollapsibleText
+          text={segment.value ?? ''}
+          t={t}
+          highlightQuery={highlightQuery}
+        />
+      );
   }
 };
 
-const MessageContent = ({ message, t }) => {
+const MessageContent = ({ message, t, highlightQuery = '' }) => {
   if (!message) {
     return null;
   }
@@ -1857,7 +1930,13 @@ const MessageContent = ({ message, t }) => {
 
   if (segments.length === 0) {
     if (message.text && message.text.trim()) {
-      return <CollapsibleText text={message.text} t={t} />;
+      return (
+        <CollapsibleText
+          text={message.text}
+          t={t}
+          highlightQuery={highlightQuery}
+        />
+      );
     }
     return <Text type='tertiary'>{t('暂无数据')}</Text>;
   }
@@ -1869,6 +1948,7 @@ const MessageContent = ({ message, t }) => {
           key={`segment-${segment.type}-${index}`}
           segment={segment}
           t={t}
+          highlightQuery={highlightQuery}
         />
       ))}
     </Space>
@@ -1977,7 +2057,7 @@ const RawView = ({
   );
 };
 
-const JsonNode = ({ label, value, t, depth = 0 }) => {
+const JsonNode = ({ label, value, t, depth = 0, highlightQuery = '' }) => {
   const [collapsed, setCollapsed] = useState(() => {
     if (Array.isArray(value)) {
       return value.length > 3;
@@ -2012,7 +2092,13 @@ const JsonNode = ({ label, value, t, depth = 0 }) => {
           <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
             {value.map((item, idx) => (
               <div key={`idx-${idx}`} className='w-full'>
-                <JsonNode label={idx} value={item} t={t} depth={depth + 1} />
+                <JsonNode
+                  label={idx}
+                  value={item}
+                  t={t}
+                  depth={depth + 1}
+                  highlightQuery={highlightQuery}
+                />
               </div>
             ))}
           </Space>
@@ -2020,7 +2106,13 @@ const JsonNode = ({ label, value, t, depth = 0 }) => {
           <Space vertical align='start' style={{ width: '100%', gap: 8 }}>
             {Object.keys(value).map((k) => (
               <div key={`key-${k}`} className='w-full'>
-                <JsonNode label={k} value={value[k]} t={t} depth={depth + 1} />
+                <JsonNode
+                  label={k}
+                  value={value[k]}
+                  t={t}
+                  depth={depth + 1}
+                  highlightQuery={highlightQuery}
+                />
               </div>
             ))}
           </Space>
@@ -2028,7 +2120,7 @@ const JsonNode = ({ label, value, t, depth = 0 }) => {
       ) : (
         <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
           {typeof value === 'string'
-            ? value
+            ? renderHighlightedText(value, highlightQuery)
             : typeof value === 'number' || typeof value === 'boolean'
               ? String(value)
               : ''}
@@ -2038,13 +2130,13 @@ const JsonNode = ({ label, value, t, depth = 0 }) => {
   );
 };
 
-const JsonViewer = ({ data, t }) => {
+const JsonViewer = ({ data, t, highlightQuery = '' }) => {
   if (data === undefined || data === null) {
     return <Text type='tertiary'>{t('暂无数据')}</Text>;
   }
   return (
     <div className='w-full rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] p-3'>
-      <JsonNode value={data} t={t} />
+      <JsonNode value={data} t={t} highlightQuery={highlightQuery} />
     </div>
   );
 };
@@ -2121,7 +2213,7 @@ const buildFormattedView = ({
             theme='borderless'
             icon={<IconCopy />}
             aria-label={t('复制')}
-            className='absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity'
+            className='absolute top-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'
             onClick={() => onCopyMessage && onCopyMessage(message)}
           />
         </Tooltip>
@@ -2227,6 +2319,8 @@ const UsageLogDetailDrawer = ({
   log,
   t,
 }) => {
+  const isMobile = useIsMobile();
+
   const requestRaw = log?.detail?.request_body || '';
   const responseRaw = log?.detail?.response_body || '';
 
@@ -2241,13 +2335,17 @@ const UsageLogDetailDrawer = ({
       return [responseJson];
     }
     if (Array.isArray(responseJson)) {
-      const candidates = responseJson.filter((item) => looksLikeStreamObject(item));
+      const candidates = responseJson.filter((item) =>
+        looksLikeStreamObject(item),
+      );
       if (candidates.length > 0) {
         return candidates;
       }
       const nestedCandidates = responseJson
         .map((item) => item?.events ?? item?.data ?? item?.chunks)
-        .find((value) => Array.isArray(value) && value.some(looksLikeStreamObject));
+        .find(
+          (value) => Array.isArray(value) && value.some(looksLikeStreamObject),
+        );
       if (Array.isArray(nestedCandidates)) {
         return nestedCandidates.filter(Boolean);
       }
@@ -2287,6 +2385,92 @@ const UsageLogDetailDrawer = ({
     [effectiveResponseJson, streamObjects],
   );
 
+  const other = useMemo(() => {
+    const raw = log?.other;
+    if (!raw) {
+      return null;
+    }
+    if (typeof raw === 'object') {
+      return raw;
+    }
+    if (typeof raw === 'string') {
+      return safeParseJson(raw);
+    }
+    return null;
+  }, [log?.other]);
+
+  const toolInvocations = useMemo(() => {
+    const invocations = [];
+    const resultsById = new Map();
+    const calls = [];
+
+    const collect = (messages, source) => {
+      if (!Array.isArray(messages)) {
+        return;
+      }
+      messages.forEach((message, messageIndex) => {
+        const segments = Array.isArray(message?.segments)
+          ? message.segments
+          : [];
+        segments.forEach((segment, segmentIndex) => {
+          if (!segment || typeof segment !== 'object') {
+            return;
+          }
+          const id = segment.id ? String(segment.id) : '';
+          if (segment.type === 'tool_result') {
+            if (!id) {
+              return;
+            }
+            const list = resultsById.get(id) || [];
+            list.push({ segment, source, messageIndex, segmentIndex });
+            resultsById.set(id, list);
+            return;
+          }
+          if (segment.type === 'tool_call') {
+            calls.push({ segment, source, messageIndex, segmentIndex, id });
+          }
+        });
+      });
+    };
+
+    collect(requestMessages, 'request');
+    collect(responseMessages, 'response');
+
+    const usedResultIds = new Set();
+    calls.forEach((call) => {
+      const id = call.id;
+      const results = id ? resultsById.get(id) || [] : [];
+      if (id) {
+        usedResultIds.add(id);
+      }
+      invocations.push({
+        id,
+        name: call.segment?.name,
+        call,
+        results,
+      });
+    });
+
+    // Orphan results: results with id but no matching call
+    resultsById.forEach((results, id) => {
+      if (!usedResultIds.has(id)) {
+        invocations.push({
+          id,
+          name: results[0]?.segment?.name,
+          call: null,
+          results,
+        });
+      }
+    });
+
+    return invocations;
+  }, [requestMessages, responseMessages]);
+
+  const hasStreamData =
+    Boolean(log?.is_stream) ||
+    Boolean(isSingleStreamObject) ||
+    (Array.isArray(streamObjects) && streamObjects.length > 0);
+
   const paramsRef = useRef(null);
   const reqMsgsRef = useRef(null);
   const respOverviewRef = useRef(null);
@@ -2310,7 +2494,192 @@ const UsageLogDetailDrawer = ({
     [t],
   );
 
-  const [activeTab, setActiveTab] = useState('params');
+  const [searchValue, setSearchValue] = useState('');
+  const [onlyMatches, setOnlyMatches] = useState(false);
+  const [isSearchComposing, setIsSearchComposing] = useState(false);
+
+  const [toolsFilterOpen, setToolsFilterOpen] = useState(false);
+  const [filterToolName, setFilterToolName] = useState('');
+  const [filterCallId, setFilterCallId] = useState('');
+  const [filterToolStatus, setFilterToolStatus] = useState('all');
+
+  const toolNameOptions = useMemo(() => {
+    const names = new Set();
+    (toolInvocations || []).forEach((inv) => {
+      if (inv?.name) {
+        names.add(inv.name);
+      }
+    });
+    return Array.from(names).sort();
+  }, [toolInvocations]);
+
+  const searchQuery = useMemo(() => {
+    if (isSearchComposing) {
+      return '';
+    }
+    return (searchValue || '').trim();
+  }, [isSearchComposing, searchValue]);
+
+  const searchQueryLower = useMemo(
+    () => normalizeSearchQuery(searchQuery),
+    [searchQuery],
+  );
+  const shouldFilterBySearch = Boolean(searchQueryLower) && onlyMatches;
+
+  const visibleRequestMessages = useMemo(() => {
+    if (!shouldFilterBySearch) {
+      return requestMessages;
+    }
+    return (requestMessages || []).filter((message) => {
+      if (!message) {
+        return false;
+      }
+      if (includesSearch(message.role, searchQueryLower)) {
+        return true;
+      }
+      if (includesSearch(message.text, searchQueryLower)) {
+        return true;
+      }
+      const segments = Array.isArray(message.segments) ? message.segments : [];
+      return segments.some((segment) => {
+        if (!segment) {
+          return false;
+        }
+        return (
+          includesSearch(segment.type, searchQueryLower) ||
+          includesSearch(segment.name, searchQueryLower) ||
+          includesSearch(segment.id, searchQueryLower) ||
+          includesSearch(segment.label, searchQueryLower) ||
+          includesSearch(segment.value, searchQueryLower)
+        );
+      });
+    });
+  }, [requestMessages, searchQueryLower, shouldFilterBySearch]);
+
+  const visibleResponseMessages = useMemo(() => {
+    if (!shouldFilterBySearch) {
+      return responseMessages;
+    }
+    return (responseMessages || []).filter((message) => {
+      if (!message) {
+        return false;
+      }
+      if (includesSearch(message.role, searchQueryLower)) {
+        return true;
+      }
+      if (includesSearch(message.text, searchQueryLower)) {
+        return true;
+      }
+      const segments = Array.isArray(message.segments) ? message.segments : [];
+      return segments.some((segment) => {
+        if (!segment) {
+          return false;
+        }
+        return (
+          includesSearch(segment.type, searchQueryLower) ||
+          includesSearch(segment.name, searchQueryLower) ||
+          includesSearch(segment.id, searchQueryLower) ||
+          includesSearch(segment.label, searchQueryLower) ||
+          includesSearch(segment.value, searchQueryLower)
+        );
+      });
+    });
+  }, [responseMessages, searchQueryLower, shouldFilterBySearch]);
+
+  const visibleToolInvocations = useMemo(() => {
+    if (!shouldFilterBySearch) {
+      return toolInvocations;
+    }
+    return (toolInvocations || []).filter((invocation) => {
+      if (!invocation) {
+        return false;
+      }
+      if (includesSearch(invocation.id, searchQueryLower)) {
+        return true;
+      }
+      if (includesSearch(invocation.name, searchQueryLower)) {
+        return true;
+      }
+      const callSegment = invocation.call?.segment;
+      if (
+        callSegment &&
+        (includesSearch(callSegment.name, searchQueryLower) ||
+          includesSearch(callSegment.id, searchQueryLower) ||
+          includesSearch(callSegment.value, searchQueryLower))
+      ) {
+        return true;
+      }
+      const results = Array.isArray(invocation.results)
+        ? invocation.results
+        : [];
+      return results.some((item) => {
+        const seg = item?.segment;
+        if (!seg) {
+          return false;
+        }
+        return (
+          includesSearch(seg.name, searchQueryLower) ||
+          includesSearch(seg.id, searchQueryLower) ||
+          includesSearch(seg.value, searchQueryLower)
+        );
+      });
+    });
+  }, [toolInvocations, searchQueryLower, shouldFilterBySearch]);
+
+  const filteredToolInvocations = useMemo(() => {
+    let invocations = Array.isArray(visibleToolInvocations)
+      ? visibleToolInvocations
+      : [];
+    const callIdLower = normalizeSearchQuery(filterCallId);
+
+    if (filterToolName) {
+      invocations = invocations.filter((inv) => inv?.name === filterToolName);
+    }
+    if (callIdLower) {
+      invocations = invocations.filter((inv) =>
+        includesSearch(inv?.id, callIdLower),
+      );
+    }
+    if (filterToolStatus !== 'all') {
+      invocations = invocations.filter((inv) => {
+        const hasCall = Boolean(inv?.call);
+        const hasResults =
+          Array.isArray(inv?.results) && inv.results.length > 0;
+        if (filterToolStatus === 'missing_result') {
+          return hasCall && !hasResults;
+        }
+        if (filterToolStatus === 'completed') {
+          return hasCall && hasResults;
+        }
+        if (filterToolStatus === 'orphan_result') {
+          return !hasCall;
+        }
+        return true;
+      });
+    }
+
+    return invocations;
+  }, [filterCallId, filterToolName, filterToolStatus, visibleToolInvocations]);
+
+  const [activeTab, setActiveTab] = useState('overview');
+
+  useEffect(() => {
+    setActiveTab('overview');
+    setSearchValue('');
+    setOnlyMatches(false);
+    setIsSearchComposing(false);
+
+    setToolsFilterOpen(false);
+    setFilterToolName('');
+    setFilterCallId('');
+    setFilterToolStatus('all');
+  }, [log?.id]);
+
+  useEffect(() => {
+    if (activeTab !== 'tools') {
+      setToolsFilterOpen(false);
+    }
+  }, [activeTab]);
 
   const handleModeChange = (next) => {
     const value =
@@ -2329,7 +2698,7 @@ const UsageLogDetailDrawer = ({
       placement='right'
       visible={visible}
       onCancel={onClose}
-      width={'clamp(360px, 92vw, 960px)'}
+      width={isMobile ? '100vw' : 'clamp(360px, 92vw, 960px)'}
       maskClosable
       title={
         <div className='w-full flex items-center justify-between'>
@@ -2358,7 +2727,7 @@ const UsageLogDetailDrawer = ({
         />
       }
       bodyStyle={{
-        padding: '0 24px 16px 24px',
+        padding: isMobile ? '0 12px 12px 12px' : '0 24px 16px 24px',
         height: '100%',
         overflow: 'auto',
       }}
@@ -2378,12 +2747,278 @@ const UsageLogDetailDrawer = ({
                   padding: 0,
                 }}
               >
-                <Tabs.TabPane tab={t('请求参数')} itemKey='params' />
-                <Tabs.TabPane tab={t('请求消息')} itemKey='req' />
-                <Tabs.TabPane tab={t('响应概览')} itemKey='respOverview' />
-                <Tabs.TabPane tab={t('响应消息')} itemKey='resp' />
+                <Tabs.TabPane tab={t('概览')} itemKey='overview' />
+                <Tabs.TabPane tab={t('参数')} itemKey='params' />
+                <Tabs.TabPane tab={t('消息')} itemKey='messages' />
+                <Tabs.TabPane tab={t('工具链')} itemKey='tools' />
+                <Tabs.TabPane tab={t('指标')} itemKey='metrics' />
+                {hasStreamData ? (
+                  <Tabs.TabPane tab={t('流式')} itemKey='stream' />
+                ) : null}
               </Tabs>
+
+              <div className='w-full bg-[var(--semi-color-bg-2)] border-b border-[var(--semi-color-border)] py-2'>
+                <Space
+                  align='center'
+                  spacing={12}
+                  style={{
+                    width: '100%',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <Input
+                      prefix={<IconSearch />}
+                      placeholder={t('搜索消息/工具/JSON')}
+                      value={searchValue}
+                      onChange={setSearchValue}
+                      onCompositionStart={() => setIsSearchComposing(true)}
+                      onCompositionEnd={() => setIsSearchComposing(false)}
+                      showClear
+                      size='small'
+                    />
+                  </div>
+                  <Space align='center' spacing={8}>
+                    <Text type='tertiary'>{t('仅看命中')}</Text>
+                    <Switch checked={onlyMatches} onChange={setOnlyMatches} />
+                    {activeTab === 'tools' ? (
+                      <Tooltip content={t('过滤')}>
+                        <Button
+                          theme='borderless'
+                          icon={<IconFilter />}
+                          aria-label={t('过滤')}
+                          onClick={() => setToolsFilterOpen((v) => !v)}
+                        />
+                      </Tooltip>
+                    ) : null}
+                  </Space>
+                </Space>
+
+                {activeTab === 'tools' && toolsFilterOpen ? (
+                  <div className='mt-2'>
+                    <Space
+                      align='center'
+                      wrap
+                      spacing={8}
+                      style={{ width: '100%' }}
+                    >
+                      <Select
+                        size='small'
+                        value={filterToolName}
+                        onChange={setFilterToolName}
+                        placeholder={t('工具名')}
+                        optionList={[
+                          { value: '', label: t('全部工具') },
+                          ...toolNameOptions.map((name) => ({
+                            value: name,
+                            label: name,
+                          })),
+                        ]}
+                        style={{ minWidth: 180 }}
+                      />
+                      <Input
+                        size='small'
+                        value={filterCallId}
+                        onChange={setFilterCallId}
+                        placeholder={t('调用ID')}
+                        showClear
+                        style={{ minWidth: 180 }}
+                      />
+                      <Select
+                        size='small'
+                        value={filterToolStatus}
+                        onChange={setFilterToolStatus}
+                        placeholder={t('状态')}
+                        optionList={[
+                          { value: 'all', label: t('全部状态') },
+                          { value: 'completed', label: t('已完成') },
+                          { value: 'missing_result', label: t('缺少结果') },
+                          { value: 'orphan_result', label: t('仅结果') },
+                        ]}
+                        style={{ minWidth: 140 }}
+                      />
+                      <Button
+                        size='small'
+                        type='tertiary'
+                        onClick={() => {
+                          setFilterToolName('');
+                          setFilterCallId('');
+                          setFilterToolStatus('all');
+                        }}
+                      >
+                        {t('清除')}
+                      </Button>
+                    </Space>
+                  </div>
+                ) : null}
+              </div>
             </div>
+
+            {activeTab === 'overview' && (
+              <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
+                <div className='grid grid-cols-1 md:grid-cols-2 gap-3 w-full'>
+                  <div className='rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] p-3'>
+                    <Space
+                      vertical
+                      align='start'
+                      style={{ width: '100%', gap: 8 }}
+                    >
+                      <Text strong>{t('请求')}</Text>
+                      <Descriptions
+                        size='small'
+                        style={{ width: '100%' }}
+                        data={(() => {
+                          const rows = [];
+                          if (log?.id !== undefined) {
+                            rows.push({ key: t('ID'), value: log.id });
+                          }
+                          if (log?.timestamp2string) {
+                            rows.push({
+                              key: t('时间'),
+                              value: log.timestamp2string,
+                            });
+                          } else if (log?.created_at) {
+                            rows.push({
+                              key: t('时间戳'),
+                              value: log.created_at,
+                            });
+                          }
+                          if (log?.username) {
+                            rows.push({ key: t('用户'), value: log.username });
+                          }
+                          if (log?.token_name) {
+                            rows.push({
+                              key: t('令牌'),
+                              value: log.token_name,
+                            });
+                          }
+                          if (log?.model_name) {
+                            rows.push({
+                              key: t('模型'),
+                              value: log.model_name,
+                            });
+                          }
+                          if (log?.group) {
+                            rows.push({ key: t('分组'), value: log.group });
+                          }
+                          if (log?.channel_name) {
+                            rows.push({
+                              key: t('渠道'),
+                              value: log.channel_name,
+                            });
+                          }
+                          if (log?.ip) {
+                            rows.push({ key: t('IP'), value: log.ip });
+                          }
+                          if (rows.length === 0) {
+                            rows.push({ key: t('状态'), value: t('暂无数据') });
+                          }
+                          return rows;
+                        })()}
+                      />
+                    </Space>
+                  </div>
+
+                  <div className='rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] p-3'>
+                    <Space
+                      vertical
+                      align='start'
+                      style={{ width: '100%', gap: 8 }}
+                    >
+                      <Text strong>{t('概览')}</Text>
+                      <Descriptions
+                        size='small'
+                        style={{ width: '100%' }}
+                        data={(() => {
+                          const rows = [];
+                          const promptTokens =
+                            log?.prompt_tokens !== undefined
+                              ? log.prompt_tokens
+                              : responseUsage?.prompt_tokens;
+                          const completionTokens =
+                            log?.completion_tokens !== undefined
+                              ? log.completion_tokens
+                              : responseUsage?.completion_tokens;
+                          if (promptTokens !== undefined) {
+                            rows.push({
+                              key: t('提示Tokens'),
+                              value: promptTokens,
+                            });
+                          }
+                          if (completionTokens !== undefined) {
+                            rows.push({
+                              key: t('补全Tokens'),
+                              value: completionTokens,
+                            });
+                          }
+                          if (responseUsage?.total_tokens !== undefined) {
+                            rows.push({
+                              key: t('总Tokens'),
+                              value: responseUsage.total_tokens,
+                            });
+                          }
+                          if (log?.quota !== undefined) {
+                            rows.push({ key: t('消耗额度'), value: log.quota });
+                          }
+                          if (log?.use_time !== undefined) {
+                            rows.push({
+                              key: t('耗时'),
+                              value: `${log.use_time}s`,
+                            });
+                          }
+                          if (other?.frt !== undefined) {
+                            rows.push({
+                              key: t('首包时延'),
+                              value: `${other.frt}s`,
+                            });
+                          }
+                          if (hasStreamData) {
+                            rows.push({ key: t('流式'), value: t('是') });
+                          }
+                          if (responseJson?.model) {
+                            rows.push({
+                              key: t('实际模型'),
+                              value: responseJson.model,
+                            });
+                          }
+                          if (rows.length === 0) {
+                            rows.push({ key: t('状态'), value: t('暂无数据') });
+                          }
+                          return rows;
+                        })()}
+                      />
+                    </Space>
+                  </div>
+                </div>
+
+                {(() => {
+                  const warnings = [];
+                  if (!requestJson && requestRaw && requestRaw.trim()) {
+                    warnings.push(t('请求体无法解析为JSON'));
+                  }
+                  if (
+                    !responseJson &&
+                    (!streamObjects || streamObjects.length === 0) &&
+                    responseRaw &&
+                    responseRaw.trim()
+                  ) {
+                    warnings.push(t('响应体无法解析为JSON'));
+                  }
+                  if (warnings.length === 0) {
+                    return null;
+                  }
+                  return (
+                    <Space wrap spacing={8}>
+                      {warnings.map((item, idx) => (
+                        <Tag key={`warn-${idx}`} type='ghost' color='orange'>
+                          {item}
+                        </Tag>
+                      ))}
+                    </Space>
+                  );
+                })()}
+              </Space>
+            )}
 
             {activeTab === 'params' && (
               <div style={{ width: '100%' }}>
@@ -2402,122 +3037,305 @@ const UsageLogDetailDrawer = ({
               </div>
             )}
 
-            {activeTab === 'req' && (
-              <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
-                {(() => {
-                  const messages = requestMessages;
-                  if (!messages || messages.length === 0) {
-                    return (
-                      <Text type='tertiary'>{t('该请求没有消息内容')}</Text>
-                    );
-                  }
-                  return messages.map((message, index) => (
-                    <div
-                      key={`request-msg-${index}`}
-                      className='relative group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2 w-full'
+            {activeTab === 'messages' && (
+              <Space vertical align='start' style={{ width: '100%', gap: 16 }}>
+                <div ref={reqMsgsRef} style={{ width: '100%' }}>
+                  <Text strong>{t('请求消息')}</Text>
+                  <div className='mt-2'>
+                    <Space
+                      vertical
+                      align='start'
+                      style={{ width: '100%', gap: 12 }}
                     >
-                      <Space align='start' style={{ width: '100%', gap: 12 }}>
-                        <Tag type='ghost' color='purple'>
-                          {message.role}
-                        </Tag>
-                        <div style={{ flex: 1, width: '100%' }}>
-                          <MessageContent message={message} t={t} />
-                        </div>
-                      </Space>
-                      <Tooltip content={t('复制')}>
-                        <Button
-                          size='small'
-                          theme='borderless'
-                          icon={<IconCopy />}
-                          aria-label={t('复制')}
-                          className='absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity'
-                          onClick={() => handleCopyMessage(message)}
-                        />
-                      </Tooltip>
-                    </div>
-                  ));
-                })()}
+                      {(() => {
+                        const messages = visibleRequestMessages;
+                        if (!messages || messages.length === 0) {
+                          return (
+                            <Text type='tertiary'>
+                              {shouldFilterBySearch
+                                ? t('无匹配结果')
+                                : t('该请求没有消息内容')}
+                            </Text>
+                          );
+                        }
+                        return messages.map((message, index) => (
+                          <div
+                            key={`request-msg-${index}`}
+                            className='relative group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] px-3 py-2 w-full'
+                          >
+                            <Space
+                              align='start'
+                              style={{ width: '100%', gap: 12 }}
+                            >
+                              <Tag type='ghost' color='purple'>
+                                {message.role}
+                              </Tag>
+                              <div style={{ flex: 1, width: '100%' }}>
+                                <MessageContent
+                                  message={message}
+                                  t={t}
+                                  highlightQuery={searchQuery}
+                                />
+                              </div>
+                            </Space>
+                            <Tooltip content={t('复制')}>
+                              <Button
+                                size='small'
+                                theme='borderless'
+                                icon={<IconCopy />}
+                                aria-label={t('复制')}
+                                className='absolute top-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'
+                                onClick={() => handleCopyMessage(message)}
+                              />
+                            </Tooltip>
+                          </div>
+                        ));
+                      })()}
+                    </Space>
+                  </div>
+                </div>
+
+                <Divider style={{ width: '100%' }} />
+
+                <div ref={respMsgsRef} style={{ width: '100%' }}>
+                  <Text strong>{t('响应消息')}</Text>
+                  <div className='mt-2'>
+                    <Space
+                      vertical
+                      align='start'
+                      style={{ width: '100%', gap: 12 }}
+                    >
+                      {(() => {
+                        const messages = visibleResponseMessages;
+                        if (!messages || messages.length === 0) {
+                          return (
+                            <Text type='tertiary'>
+                              {shouldFilterBySearch
+                                ? t('无匹配结果')
+                                : t('该响应没有消息内容')}
+                            </Text>
+                          );
+                        }
+                        return messages.map((message, index) => (
+                          <div
+                            key={`response-msg-${index}`}
+                            className='relative group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] px-3 py-2 w-full'
+                          >
+                            <Space
+                              align='start'
+                              style={{ width: '100%', gap: 12 }}
+                            >
+                              <Tag type='ghost' color='blue'>
+                                {message.role}
+                              </Tag>
+                              <div style={{ flex: 1, width: '100%' }}>
+                                <MessageContent
+                                  message={message}
+                                  t={t}
+                                  highlightQuery={searchQuery}
+                                />
+                              </div>
+                            </Space>
+                            <Tooltip content={t('复制')}>
+                              <Button
+                                size='small'
+                                theme='borderless'
+                                icon={<IconCopy />}
+                                aria-label={t('复制')}
+                                className='absolute top-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'
+                                onClick={() => handleCopyMessage(message)}
+                              />
+                            </Tooltip>
+                          </div>
+                        ));
+                      })()}
+                    </Space>
+                  </div>
+                </div>
               </Space>
             )}
 
-            {activeTab === 'respOverview' && (
+            {activeTab === 'metrics' && (
               <Descriptions
+                size='small'
+                style={{ width: '100%' }}
                 data={(() => {
                   const rows = [];
+
+                  const promptTokens =
+                    log?.prompt_tokens !== undefined
+                      ? log.prompt_tokens
+                      : responseUsage?.prompt_tokens;
+                  const completionTokens =
+                    log?.completion_tokens !== undefined
+                      ? log.completion_tokens
+                      : responseUsage?.completion_tokens;
+
                   if (responseJson?.model) {
                     rows.push({
                       key: t('实际模型'),
                       value: responseJson.model,
                     });
                   }
-                  if (responseUsage) {
-                    if (responseUsage.prompt_tokens !== undefined) {
-                      rows.push({
-                        key: t('提示Tokens'),
-                        value: responseUsage.prompt_tokens,
-                      });
-                    }
-                    if (responseUsage.completion_tokens !== undefined) {
-                      rows.push({
-                        key: t('补全Tokens'),
-                        value: responseUsage.completion_tokens,
-                      });
-                    }
-                    if (responseUsage.total_tokens !== undefined) {
-                      rows.push({
-                        key: t('总Tokens'),
-                        value: responseUsage.total_tokens,
-                      });
-                    }
+                  if (promptTokens !== undefined) {
+                    rows.push({ key: t('提示Tokens'), value: promptTokens });
                   }
-                  if (rows.length === 0) {
+                  if (completionTokens !== undefined) {
                     rows.push({
-                      key: t('状态'),
-                      value: t('未提供响应统计信息'),
+                      key: t('补全Tokens'),
+                      value: completionTokens,
                     });
+                  }
+                  if (responseUsage?.total_tokens !== undefined) {
+                    rows.push({
+                      key: t('总Tokens'),
+                      value: responseUsage.total_tokens,
+                    });
+                  }
+                  if (log?.quota !== undefined) {
+                    rows.push({ key: t('消耗额度'), value: log.quota });
+                  }
+                  if (log?.use_time !== undefined) {
+                    rows.push({ key: t('耗时'), value: `${log.use_time}s` });
+                  }
+                  if (other?.frt !== undefined) {
+                    rows.push({ key: t('首包时延'), value: `${other.frt}s` });
+                  }
+                  if (hasStreamData) {
+                    rows.push({ key: t('流式'), value: t('是') });
+                  }
+
+                  if (rows.length === 0) {
+                    rows.push({ key: t('状态'), value: t('暂无数据') });
                   }
                   return rows;
                 })()}
-                size='small'
-                style={{ width: '100%' }}
               />
             )}
 
-            {activeTab === 'resp' && (
+            {activeTab === 'tools' && (
               <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
                 {(() => {
-                  const messages = responseMessages;
-                  if (!messages || messages.length === 0) {
+                  const invocations = filteredToolInvocations;
+                  if (!invocations || invocations.length === 0) {
                     return (
-                      <Text type='tertiary'>{t('该响应没有消息内容')}</Text>
+                      <Text type='tertiary'>
+                        {shouldFilterBySearch ||
+                        filterToolName ||
+                        filterCallId ||
+                        filterToolStatus !== 'all'
+                          ? t('无匹配结果')
+                          : t('未发现工具调用')}
+                      </Text>
                     );
                   }
-                  return messages.map((message, index) => (
-                    <div
-                      key={`response-msg-${index}`}
-                      className='relative group rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-1)] px-3 py-2 w-full'
-                    >
-                      <Space align='start' style={{ width: '100%', gap: 12 }}>
-                        <Tag type='ghost' color='blue'>
-                          {message.role}
-                        </Tag>
-                        <div style={{ flex: 1, width: '100%' }}>
-                          <MessageContent message={message} t={t} />
+
+                  return invocations.map((invocation, index) => {
+                    const hasCall = Boolean(invocation.call);
+                    const results = Array.isArray(invocation.results)
+                      ? invocation.results
+                      : [];
+
+                    const status = !hasCall
+                      ? { label: t('仅结果'), color: 'orange' }
+                      : results.length > 0
+                        ? { label: t('已完成'), color: 'green' }
+                        : { label: t('缺少结果'), color: 'yellow' };
+
+                    return (
+                      <div
+                        key={`tool-invocation-${invocation.id || invocation.name || index}`}
+                        className='rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)] p-3 w-full'
+                      >
+                        <Space align='center' wrap spacing={8}>
+                          <Text strong>{t('工具')}</Text>
+                          {invocation.name ? (
+                            <Tag type='ghost' color='blue'>
+                              {invocation.name}
+                            </Tag>
+                          ) : null}
+                          {invocation.id ? (
+                            <Tag type='ghost' color='cyan'>
+                              {t('ID')}: {invocation.id}
+                            </Tag>
+                          ) : null}
+                          <Tag type='ghost' color={status.color}>
+                            {status.label}
+                          </Tag>
+                          <Button
+                            size='small'
+                            theme='borderless'
+                            onClick={() => {
+                              const source =
+                                invocation.call?.source || results[0]?.source;
+                              if (!source) {
+                                return;
+                              }
+                              setActiveTab('messages');
+                              setTimeout(() => {
+                                const ref =
+                                  source === 'request'
+                                    ? reqMsgsRef
+                                    : respMsgsRef;
+                                ref?.current?.scrollIntoView({
+                                  behavior: 'smooth',
+                                  block: 'start',
+                                });
+                              }, 0);
+                            }}
+                          >
+                            {t('查看上下文')}
+                          </Button>
+                        </Space>
+
+                        <div className='mt-3'>
+                          {hasCall ? (
+                            <MessageSegmentView
+                              segment={invocation.call.segment}
+                              t={t}
+                              highlightQuery={searchQuery}
+                            />
+                          ) : (
+                            <Text type='tertiary'>
+                              {t('未找到对应的工具调用')}
+                            </Text>
+                          )}
+
+                          {results.length > 0 ? (
+                            <div className='mt-2 flex flex-col gap-2'>
+                              {results.map((item, ridx) => (
+                                <MessageSegmentView
+                                  key={`tool-result-${invocation.id}-${ridx}`}
+                                  segment={item.segment}
+                                  t={t}
+                                  highlightQuery={searchQuery}
+                                />
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
-                      </Space>
-                      <Tooltip content={t('复制')}>
-                        <Button
-                          size='small'
-                          theme='borderless'
-                          icon={<IconCopy />}
-                          aria-label={t('复制')}
-                          className='absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity'
-                          onClick={() => handleCopyMessage(message)}
-                        />
-                      </Tooltip>
-                    </div>
-                  ));
+                      </div>
+                    );
+                  });
                 })()}
+              </Space>
+            )}
+
+            {activeTab === 'stream' && (
+              <Space vertical align='start' style={{ width: '100%', gap: 12 }}>
+                {Array.isArray(streamObjects) && streamObjects.length > 0 ? (
+                  <CollapsibleText
+                    text={streamObjects
+                      .map((obj) => JSON.stringify(obj, null, 2))
+                      .join('\n\n')}
+                    t={t}
+                    isCode
+                    maxLines={12}
+                    highlightQuery={searchQuery}
+                  />
+                ) : (
+                  <Text type='tertiary'>{t('暂无流式数据')}</Text>
+                )}
               </Space>
             )}
           </>
