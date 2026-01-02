@@ -3982,11 +3982,24 @@ const UsageLogDetailDrawer = ({
               <div className='relative w-full h-full min-h-0 overflow-hidden'>
                 <div className='flex w-full h-full min-h-0 overflow-hidden'>
                   <div
-                    className={`flex flex-col min-h-0 gap-3 ${isMobile ? 'w-full' : 'w-[380px] flex-none'}`}
+                    className={`flex flex-col min-h-0 gap-2 ${isMobile ? 'w-full' : 'w-[380px] flex-none'}`}
                   >
                     <div ref={reqMsgsRef} className='flex flex-col min-h-0 flex-[7]'>
                       <div className='shrink-0 flex items-center justify-between'>
                         <Text strong>{t('请求消息')}</Text>
+                        <Text type='tertiary' style={{ fontSize: 12 }}>
+                          {(() => {
+                            const totalCount = Array.isArray(requestMessageItems)
+                              ? requestMessageItems.length
+                              : 0;
+                            const visibleCount = Array.isArray(visibleRequestMessageItems)
+                              ? visibleRequestMessageItems.length
+                              : 0;
+                            return visibleCount === totalCount
+                              ? String(totalCount)
+                              : `${visibleCount}/${totalCount}`;
+                          })()}
+                        </Text>
                       </div>
                       <div className='flex-1 min-h-0 overflow-auto rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)]'>
                         {(() => {
@@ -4018,13 +4031,19 @@ const UsageLogDetailDrawer = ({
                               <button
                                 key={`request-compact-${item.messageIndex}`}
                                 type='button'
-                                className={`w-full flex items-center gap-2 px-2 h-10 text-left border-b border-[var(--semi-color-border)] last:border-b-0 ${isSelected ? 'bg-[var(--semi-color-fill-1)]' : 'hover:bg-[var(--semi-color-fill-0)]'}`}
+                                className={`relative w-full flex items-center gap-2 px-3 h-10 text-left border-b border-[var(--semi-color-border)] last:border-b-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--semi-color-primary)] focus-visible:ring-inset ${isSelected ? 'bg-[var(--semi-color-fill-1)] border-l-2 border-l-[var(--semi-color-primary)]' : 'hover:bg-[var(--semi-color-fill-0)] border-l-2 border-l-transparent'}`}
                                 onClick={() =>
                                   openMessageDetail(item.source, item.messageIndex)
                                 }
                               >
+                                {isSelected ? (
+                                  <span
+                                    aria-hidden
+                                    className='absolute left-0 top-0 bottom-0 w-1 bg-[var(--semi-color-primary)]'
+                                  />
+                                ) : null}
                                 <div className='w-20 flex-none overflow-hidden'>
-                                  <Tag type='ghost' color='purple'>
+                                  <Tag type='ghost' color='purple' className='whitespace-nowrap'>
                                     {message.role}
                                   </Tag>
                                 </div>
@@ -4044,9 +4063,25 @@ const UsageLogDetailDrawer = ({
                       </div>
                     </div>
 
-                    <div ref={respMsgsRef} className='flex flex-col min-h-0 flex-[3]'>
+                    <div
+                      ref={respMsgsRef}
+                      className='flex flex-col min-h-0 flex-[3] mt-2 pt-2 border-t border-[var(--semi-color-border)]'
+                    >
                       <div className='shrink-0 flex items-center justify-between'>
                         <Text strong>{t('响应消息')}</Text>
+                        <Text type='tertiary' style={{ fontSize: 12 }}>
+                          {(() => {
+                            const totalCount = Array.isArray(responseMessageItems)
+                              ? responseMessageItems.length
+                              : 0;
+                            const visibleCount = Array.isArray(visibleResponseMessageItems)
+                              ? visibleResponseMessageItems.length
+                              : 0;
+                            return visibleCount === totalCount
+                              ? String(totalCount)
+                              : `${visibleCount}/${totalCount}`;
+                          })()}
+                        </Text>
                       </div>
                       <div className='flex-1 min-h-0 overflow-auto rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-bg-1)]'>
                         {(() => {
@@ -4078,13 +4113,19 @@ const UsageLogDetailDrawer = ({
                               <button
                                 key={`response-compact-${item.messageIndex}`}
                                 type='button'
-                                className={`w-full flex items-center gap-2 px-2 h-10 text-left border-b border-[var(--semi-color-border)] last:border-b-0 ${isSelected ? 'bg-[var(--semi-color-fill-1)]' : 'hover:bg-[var(--semi-color-fill-0)]'}`}
+                                className={`relative w-full flex items-center gap-2 px-3 h-10 text-left border-b border-[var(--semi-color-border)] last:border-b-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--semi-color-primary)] focus-visible:ring-inset ${isSelected ? 'bg-[var(--semi-color-fill-1)] border-l-2 border-l-[var(--semi-color-primary)]' : 'hover:bg-[var(--semi-color-fill-0)] border-l-2 border-l-transparent'}`}
                                 onClick={() =>
                                   openMessageDetail(item.source, item.messageIndex)
                                 }
                               >
+                                {isSelected ? (
+                                  <span
+                                    aria-hidden
+                                    className='absolute left-0 top-0 bottom-0 w-1 bg-[var(--semi-color-primary)]'
+                                  />
+                                ) : null}
                                 <div className='w-20 flex-none overflow-hidden'>
-                                  <Tag type='ghost' color='blue'>
+                                  <Tag type='ghost' color='blue' className='whitespace-nowrap'>
                                     {message.role}
                                   </Tag>
                                 </div>
