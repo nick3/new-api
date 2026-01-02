@@ -1682,12 +1682,14 @@ const CollapsibleText = ({
       {isCode ? (
         <pre
           className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrap ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
-          style={{ maxHeight: 'clamp(240px, 35vh, 320px)', overflow: 'auto' }}
+          style={{ maxHeight: 'clamp(240px, 45vh, 520px)', overflow: 'auto' }}
         >
           {rendered}
         </pre>
       ) : (
-        <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+        <Paragraph
+          style={{ marginBottom: 0, whiteSpace: 'pre-wrap', lineHeight: '22px' }}
+        >
           {rendered}
         </Paragraph>
       )}
@@ -1891,8 +1893,8 @@ const MessageSegmentView = ({
     switch (segment.type) {
       case 'text':
         return (
-          <div className='w-full relative'>
-            <div className='absolute top-0 right-0 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'>
+          <div className='w-full relative rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2'>
+            <div className='absolute top-1 right-1 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'>
               <Tooltip content={t('复制')}>
                 <Button
                   size='small'
@@ -1912,7 +1914,7 @@ const MessageSegmentView = ({
                 />
               </Tooltip>
             </div>
-            <div className='pr-8'>
+            <div className='pr-10'>
               <CollapsibleText
                 text={segment.value}
                 t={t}
@@ -1923,7 +1925,7 @@ const MessageSegmentView = ({
         );
       case 'reasoning':
         return (
-          <div className='w-full flex flex-col gap-1'>
+          <div className='w-full flex flex-col gap-2 rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-3 py-2'>
             <Space
               align='center'
               style={{ width: '100%', justifyContent: 'space-between' }}
@@ -2120,6 +2122,8 @@ const MessageSegmentView = ({
           ? {
               animation: `${animationName} 900ms ease-out 1`,
               borderRadius: 8,
+              outline: '2px solid var(--semi-color-primary)',
+              outlineOffset: 2,
             }
           : undefined
       }
@@ -2168,7 +2172,7 @@ const MessageContent = ({
   }
 
   return (
-    <Space vertical align='start' style={{ width: '100%' }} spacing={12}>
+    <Space vertical align='start' style={{ width: '100%' }} spacing={14}>
       {segmentsRaw.map((segment, segmentIndex) => {
         if (!segment) {
           return null;
@@ -2251,7 +2255,7 @@ const RawView = ({
         </Space>
         <pre
           className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrapReq ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
-          style={{ maxHeight: 'clamp(240px, 35vh, 320px)', overflow: 'auto' }}
+          style={{ maxHeight: 'clamp(240px, 45vh, 520px)', overflow: 'auto' }}
         >
           {requestText}
         </pre>
@@ -2288,7 +2292,7 @@ const RawView = ({
         </Space>
         <pre
           className={`font-mono text-xs leading-5 bg-[var(--semi-color-fill-0)] border border-[var(--semi-color-border)] rounded-md p-3 ${wrapRes ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
-          style={{ maxHeight: 'clamp(240px, 35vh, 320px)', overflow: 'auto' }}
+          style={{ maxHeight: 'clamp(240px, 45vh, 520px)', overflow: 'auto' }}
         >
           {responseText}
         </pre>
@@ -2416,7 +2420,9 @@ const JsonNode = ({ label, value, t, depth = 0, highlightQuery = '' }) => {
           </Space>
         )
       ) : (
-        <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+        <Paragraph
+          style={{ marginBottom: 0, whiteSpace: 'pre-wrap', lineHeight: '22px' }}
+        >
           {typeof value === 'string'
             ? renderHighlightedText(value, highlightQuery)
             : typeof value === 'number' || typeof value === 'boolean'
