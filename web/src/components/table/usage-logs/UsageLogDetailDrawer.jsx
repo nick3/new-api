@@ -2918,6 +2918,50 @@ const UsageLogDetailDrawer = ({
     setMessageDetailOpen(false);
   }, []);
 
+  const detailSwipeRef = useRef({
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    edge: false,
+  });
+
+  const handleDetailTouchStart = useCallback((e) => {
+    const touch = e.touches && e.touches[0];
+    if (!touch) {
+      return;
+    }
+
+    detailSwipeRef.current.startX = touch.clientX;
+    detailSwipeRef.current.startY = touch.clientY;
+    detailSwipeRef.current.lastX = touch.clientX;
+    detailSwipeRef.current.lastY = touch.clientY;
+    detailSwipeRef.current.edge = touch.clientX <= 24;
+  }, []);
+
+  const handleDetailTouchMove = useCallback((e) => {
+    const touch = e.touches && e.touches[0];
+    if (!touch) {
+      return;
+    }
+
+    detailSwipeRef.current.lastX = touch.clientX;
+    detailSwipeRef.current.lastY = touch.clientY;
+  }, []);
+
+  const handleDetailTouchEnd = useCallback(() => {
+    const { edge, startX, startY, lastX, lastY } = detailSwipeRef.current;
+    if (!edge) {
+      return;
+    }
+
+    const dx = lastX - startX;
+    const dy = Math.abs(lastY - startY);
+    if (dx > 80 && dx > dy) {
+      closeMessageDetail();
+    }
+  }, [closeMessageDetail]);
+
   const selectedMessage = useMemo(() => {
     if (!selectedMessageMeta) {
       return null;
@@ -4279,18 +4323,25 @@ const UsageLogDetailDrawer = ({
                   {isMobile ? (
                     <div
                       className={`absolute inset-0 z-20 flex flex-col min-h-0 bg-[var(--semi-color-bg-1)] transition-transform duration-200 ease-out ${messageDetailOpen ? 'translate-x-0 pointer-events-auto' : 'translate-x-full pointer-events-none'}`}
+                      onTouchStart={handleDetailTouchStart}
+                      onTouchMove={handleDetailTouchMove}
+                      onTouchEnd={handleDetailTouchEnd}
                     >
                       <div className='shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--semi-color-border)]'>
-                        <Space align='center' spacing={8}>
-                          <Tooltip content={t('关闭')}>
-                            <Button
-                              size='small'
-                              theme='borderless'
-                              icon={<IconClose />}
-                              aria-label={t('关闭')}
-                              onClick={closeMessageDetail}
-                            />
-                          </Tooltip>
+                        <Space
+                          align='center'
+                          spacing={8}
+                          className='min-w-0 overflow-hidden'
+                        >
+                          <Button
+                            theme='borderless'
+                            icon={<IconClose />}
+                            aria-label={t('返回')}
+                            onClick={closeMessageDetail}
+                            style={{ height: 36, padding: '0 10px' }}
+                          >
+                            {t('返回')}
+                          </Button>
                           {selectedMessage ? (
                             <div className='flex items-center gap-2 min-w-0 overflow-hidden'>
                               <Tag
