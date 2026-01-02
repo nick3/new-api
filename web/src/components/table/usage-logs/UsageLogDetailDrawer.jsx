@@ -2921,6 +2921,30 @@ const UsageLogDetailDrawer = ({
     return Array.isArray(list) ? list[messageIndex] : null;
   }, [requestMessages, responseMessages, selectedMessageMeta]);
 
+  const selectedMessageSourceColor = useMemo(() => {
+    return selectedMessageMeta?.source === 'request' ? 'purple' : 'blue';
+  }, [selectedMessageMeta]);
+
+  const selectedMessagePositionLabel = useMemo(() => {
+    if (!selectedMessageMeta) {
+      return '';
+    }
+
+    const sourceLabel =
+      selectedMessageMeta.source === 'request' ? t('请求') : t('响应');
+    const index = selectedMessageMeta.messageIndex + 1;
+    const total =
+      selectedMessageMeta.source === 'request'
+        ? Array.isArray(requestMessages)
+          ? requestMessages.length
+          : 0
+        : Array.isArray(responseMessages)
+          ? responseMessages.length
+          : 0;
+
+    return total ? `${sourceLabel} #${index}/${total}` : `${sourceLabel} #${index}`;
+  }, [requestMessages, responseMessages, selectedMessageMeta, t]);
+
   const [searchValue, setSearchValue] = useState('');
   const [onlyMatches, setOnlyMatches] = useState(false);
   const [isSearchComposing, setIsSearchComposing] = useState(false);
@@ -4151,16 +4175,18 @@ const UsageLogDetailDrawer = ({
                       <div className='shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--semi-color-border)]'>
                         <div className='flex items-center gap-2 min-w-0'>
                           {selectedMessage ? (
-                            <Tag
-                              type='ghost'
-                              color={
-                                selectedMessageMeta?.source === 'request'
-                                  ? 'purple'
-                                  : 'blue'
-                              }
-                            >
-                              {selectedMessage.role}
-                            </Tag>
+                            <div className='flex items-center gap-2 min-w-0 overflow-hidden'>
+                              <Tag
+                                type='ghost'
+                                color={selectedMessageSourceColor}
+                                className='whitespace-nowrap'
+                              >
+                                {selectedMessagePositionLabel}
+                              </Tag>
+                              <Tag type='ghost' color='grey' className='whitespace-nowrap'>
+                                {selectedMessage.role}
+                              </Tag>
+                            </div>
                           ) : (
                             <Text type='tertiary'>{t('请选择一条消息')}</Text>
                           )}
@@ -4260,16 +4286,18 @@ const UsageLogDetailDrawer = ({
                             />
                           </Tooltip>
                           {selectedMessage ? (
-                            <Tag
-                              type='ghost'
-                              color={
-                                selectedMessageMeta?.source === 'request'
-                                  ? 'purple'
-                                  : 'blue'
-                              }
-                            >
-                              {selectedMessage.role}
-                            </Tag>
+                            <div className='flex items-center gap-2 min-w-0 overflow-hidden'>
+                              <Tag
+                                type='ghost'
+                                color={selectedMessageSourceColor}
+                                className='whitespace-nowrap'
+                              >
+                                {selectedMessagePositionLabel}
+                              </Tag>
+                              <Tag type='ghost' color='grey' className='whitespace-nowrap'>
+                                {selectedMessage.role}
+                              </Tag>
+                            </div>
                           ) : (
                             <Text type='tertiary'>{t('请选择一条消息')}</Text>
                           )}
