@@ -216,7 +216,7 @@ func InitLogDB() (err error) {
 		if !common.IsMasterNode {
 			return nil
 		}
-		common.SysLog("database migration started")
+		common.SysLog("log database migration started")
 		err = migrateLOGDB()
 		return err
 	}
@@ -243,7 +243,7 @@ func InitLogDB() (err error) {
 		if !common.IsMasterNode {
 			return nil
 		}
-		common.SysLog("database migration started")
+		common.SysLog("log database migration started")
 		err = migrateLOGDB()
 		return err
 	} else {
