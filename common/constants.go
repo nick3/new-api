@@ -1,6 +1,7 @@
 package common
 
 import (
+	"crypto/tls"
 	//"os"
 	//"strconv"
 	"sync"
@@ -73,6 +74,9 @@ var MemoryCacheEnabled bool
 
 var LogConsumeEnabled = true
 var DetailedLogRetentionDays = 30
+
+var TLSInsecureSkipVerify bool
+var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true}
 
 var SMTPServer = ""
 var SMTPPort = 587
