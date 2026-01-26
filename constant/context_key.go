@@ -61,4 +61,8 @@ const (
 	ContextKeyLoggedResponseBody     ContextKey = "logged_response_body"
 	ContextKeyLoggedRequestBodyFull  ContextKey = "logged_request_body_full"
 	ContextKeyLoggedResponseBodyFull ContextKey = "logged_response_body_full"
+
+	// ContextKeyAdminRejectReason stores an admin-only reject/block reason extracted from upstream responses.
+	// It is not returned to end users, but can be persisted into consume/error logs for debugging.
+	ContextKeyAdminRejectReason ContextKey = "admin_reject_reason"
 )
