@@ -26,7 +26,6 @@ import {
   Tooltip,
   Popover,
   Typography,
-  Button,
 } from '@douyinfe/semi-ui';
 import {
   timestamp2string,
