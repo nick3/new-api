@@ -118,6 +118,14 @@ export const useLogsData = () => {
   const [detailViewMode, setDetailViewMode] = useState('formatted');
   const [selectedLogDetail, setSelectedLogDetail] = useState(null);
 
+  // Channel affinity usage cache stats modal state (admin only)
+  const [
+    showChannelAffinityUsageCacheModal,
+    setShowChannelAffinityUsageCacheModal,
+  ] = useState(false);
+  const [channelAffinityUsageCacheTarget, setChannelAffinityUsageCacheTarget] =
+    useState(null);
+
   // Load saved column preferences from localStorage
   useEffect(() => {
     const savedColumns = localStorage.getItem(STORAGE_KEY);
@@ -329,6 +337,17 @@ export const useLogsData = () => {
     setSelectedLogDetail(null);
   };
 
+  const openChannelAffinityUsageCacheModal = (affinity) => {
+    const a = affinity || {};
+    setChannelAffinityUsageCacheTarget({
+      rule_name: a.rule_name || a.reason || '',
+      using_group: a.using_group || '',
+      key_hint: a.key_hint || '',
+      key_fp: a.key_fp || '',
+    });
+    setShowChannelAffinityUsageCacheModal(true);
+  };
+
   // Format logs data
   const setLogsFormat = (logs) => {
     const requestConversionDisplayValue = (conversionChain) => {
@@ -397,9 +416,13 @@ export const useLogsData = () => {
                 other.cache_ratio || 1.0,
                 other.cache_creation_ratio || 1.0,
                 other.cache_creation_tokens_5m || 0,
-                other.cache_creation_ratio_5m || other.cache_creation_ratio || 1.0,
+                other.cache_creation_ratio_5m ||
+                  other.cache_creation_ratio ||
+                  1.0,
                 other.cache_creation_tokens_1h || 0,
-                other.cache_creation_ratio_1h || other.cache_creation_ratio || 1.0,
+                other.cache_creation_ratio_1h ||
+                  other.cache_creation_ratio ||
+                  1.0,
               )
             : renderLogContent(
                 other?.model_ratio,
@@ -549,8 +572,8 @@ export const useLogsData = () => {
           localCountMode = t('上游返回');
         }
         expandDataLocal.push({
-            key: t('计费模式'),
-            value: localCountMode,
+          key: t('计费模式'),
+          value: localCountMode,
         });
       }
       expandDatesLocal[logs[i].key] = expandDataLocal;
@@ -719,6 +742,12 @@ export const useLogsData = () => {
     selectedLogDetail,
     openDetailDrawer,
     closeDetailDrawer,
+
+    // Channel affinity usage cache stats modal
+    showChannelAffinityUsageCacheModal,
+    setShowChannelAffinityUsageCacheModal,
+    channelAffinityUsageCacheTarget,
+    openChannelAffinityUsageCacheModal,
 
     // Functions
     loadLogs,
