@@ -906,7 +906,7 @@ export const getLogsColumns = ({
         return renderCompactDetailSummary(detailSummary.segments);
       },
     },
-    isAdminUser && {
+    {
       key: COLUMN_KEYS.ACTION,
       title: t('操作'),
       dataIndex: 'actions',

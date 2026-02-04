@@ -123,7 +123,7 @@ export const useLogsData = () => {
       [COLUMN_KEYS.RETRY]: isAdminUser,
       [COLUMN_KEYS.IP]: true,
       [COLUMN_KEYS.DETAILS]: true,
-      [COLUMN_KEYS.ACTION]: isAdminUser,
+      [COLUMN_KEYS.ACTION]: true,
     };
   };
 
@@ -143,6 +143,12 @@ export const useLogsData = () => {
         merged[COLUMN_KEYS.CHANNEL] = false;
         merged[COLUMN_KEYS.USERNAME] = false;
         merged[COLUMN_KEYS.RETRY] = false;
+
+        const actionMigrationKey = 'logs-table-columns-user-action-enabled';
+        if (localStorage.getItem(actionMigrationKey) !== '1') {
+          merged[COLUMN_KEYS.ACTION] = true;
+          localStorage.setItem(actionMigrationKey, '1');
+        }
       }
 
       return merged;
@@ -200,9 +206,6 @@ export const useLogsData = () => {
 
   // Handle column visibility change
   const handleColumnVisibilityChange = (columnKey, checked) => {
-    if (columnKey === COLUMN_KEYS.ACTION && !isAdminUser) {
-      return;
-    }
     const updatedColumns = { ...visibleColumns, [columnKey]: checked };
     setVisibleColumns(updatedColumns);
   };
@@ -216,8 +219,7 @@ export const useLogsData = () => {
       if (
         (key === COLUMN_KEYS.CHANNEL ||
           key === COLUMN_KEYS.USERNAME ||
-          key === COLUMN_KEYS.RETRY ||
-          key === COLUMN_KEYS.ACTION) &&
+          key === COLUMN_KEYS.RETRY) &&
         !isAdminUser
       ) {
         updatedColumns[key] = false;
