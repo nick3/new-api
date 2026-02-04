@@ -24,6 +24,24 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var defaultPassThroughHeaderDenySet = map[string]struct{}{
+	"authorization":       {},
+	"api-key":             {},
+	"x-api-key":           {},
+	"cookie":              {},
+	"connection":          {},
+	"keep-alive":          {},
+	"proxy-authenticate":  {},
+	"proxy-authorization": {},
+	"te":                  {},
+	"trailer":             {},
+	"transfer-encoding":   {},
+	"upgrade":             {},
+	"proxy-connection":    {},
+	"host":                {},
+	"content-length":      {},
+}
+
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
 	if info.RelayMode == constant.RelayModeAudioTranscription || info.RelayMode == constant.RelayModeAudioTranslation {
 		// multipart/form-data
@@ -38,9 +56,46 @@ func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Hea
 	}
 }
 
-// processHeaderOverride 处理请求头覆盖，支持变量替换
-// 支持的变量：{api_key}
-func processHeaderOverride(info *common.RelayInfo) (map[string]string, error) {
+const clientHeaderPlaceholderPrefix = "{client_header:"
+
+func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey string) (string, bool, error) {
+	trimmed := strings.TrimSpace(template)
+	if strings.HasPrefix(trimmed, clientHeaderPlaceholderPrefix) {
+		afterPrefix := trimmed[len(clientHeaderPlaceholderPrefix):]
+		end := strings.Index(afterPrefix, "}")
+		if end < 0 || end != len(afterPrefix)-1 {
+			return "", false, fmt.Errorf("client_header placeholder must be the full value: %q", template)
+		}
+
+		name := strings.TrimSpace(afterPrefix[:end])
+		if name == "" {
+			return "", false, fmt.Errorf("client_header placeholder name is empty: %q", template)
+		}
+		if c == nil || c.Request == nil {
+			return "", false, fmt.Errorf("missing request context for client_header placeholder")
+		}
+		clientHeaderValue := c.Request.Header.Get(name)
+		if strings.TrimSpace(clientHeaderValue) == "" {
+			return "", false, nil
+		}
+		// Do not interpolate {api_key} inside client-supplied content.
+		return clientHeaderValue, true, nil
+	}
+
+	if strings.Contains(template, "{api_key}") {
+		template = strings.ReplaceAll(template, "{api_key}", apiKey)
+	}
+	if strings.TrimSpace(template) == "" {
+		return "", false, nil
+	}
+	return template, true, nil
+}
+
+// processHeaderOverride applies channel header overrides, with placeholder substitution.
+// Supported placeholders:
+//   - {api_key}: resolved to the channel API key
+//   - {client_header:<name>}: resolved to the incoming request header value
+func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]string, error) {
 	headerOverride := make(map[string]string)
 	for k, v := range info.HeadersOverride {
 		str, ok := v.(string)
@@ -48,14 +103,89 @@ func processHeaderOverride(info *common.RelayInfo) (map[string]string, error) {
 			return nil, types.NewError(nil, types.ErrorCodeChannelHeaderOverrideInvalid)
 		}
 
-		// 替换支持的变量
-		if strings.Contains(str, "{api_key}") {
-			str = strings.ReplaceAll(str, "{api_key}", info.ApiKey)
+		value, include, err := applyHeaderOverridePlaceholders(str, c, info.ApiKey)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeChannelHeaderOverrideInvalid)
+		}
+		if !include {
+			continue
 		}
 
-		headerOverride[k] = str
+		headerOverride[k] = value
 	}
 	return headerOverride, nil
+}
+
+// applyPassThroughRequestHeadersIfEnabled 将下游请求头透传到上游请求头（最低优先级）
+//
+// - 仅当渠道开启 pass_through_header_enabled 时生效
+// - 会过滤鉴权字段与 hop-by-hop 控制头，并解析 Connection 中声明的 hop-by-hop header
+// - 透传发生在 header_override 与 adaptor.SetupRequestHeader 之前，因此优先级最低
+func applyPassThroughRequestHeadersIfEnabled(c *gin.Context, info *common.RelayInfo, dst http.Header, extraDeny []string) {
+	if info == nil || !info.ChannelSetting.PassThroughHeaderEnabled {
+		return
+	}
+	if c == nil || c.Request == nil {
+		return
+	}
+	src := c.Request.Header
+	if src == nil {
+		return
+	}
+	deny := buildPassThroughHeaderDenySet(src, extraDeny)
+	copyHeadersExcept(dst, src, deny)
+}
+
+func buildPassThroughHeaderDenySet(src http.Header, extraDeny []string) map[string]struct{} {
+	deny := make(map[string]struct{}, len(defaultPassThroughHeaderDenySet)+len(extraDeny)+4)
+	for k := range defaultPassThroughHeaderDenySet {
+		deny[k] = struct{}{}
+	}
+
+	// Connection: token1, token2
+	for _, v := range src.Values("Connection") {
+		for _, token := range strings.Split(v, ",") {
+			t := strings.ToLower(strings.TrimSpace(token))
+			if t == "" {
+				continue
+			}
+			deny[t] = struct{}{}
+		}
+	}
+
+	for _, h := range extraDeny {
+		t := strings.ToLower(strings.TrimSpace(h))
+		if t == "" {
+			continue
+		}
+		deny[t] = struct{}{}
+	}
+	return deny
+}
+
+func copyHeadersExcept(dst, src http.Header, deny map[string]struct{}) {
+	for k, vv := range src {
+		if len(vv) == 0 {
+			continue
+		}
+		if _, blocked := deny[strings.ToLower(k)]; blocked {
+			continue
+		}
+		dst[http.CanonicalHeaderKey(k)] = append([]string(nil), vv...)
+	}
+}
+
+func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {
+	if req == nil {
+		return
+	}
+	for key, value := range headerOverride {
+		req.Header.Set(key, value)
+		// set Host in req
+		if strings.EqualFold(key, "Host") {
+			req.Host = value
+		}
+	}
 }
 
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -71,17 +201,18 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
 	headers := req.Header
-	headerOverride, err := processHeaderOverride(info)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range headerOverride {
-		headers.Set(key, value)
-	}
+	applyPassThroughRequestHeadersIfEnabled(c, info, headers, nil)
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
+	// 这样可以覆盖默认的 Authorization header 设置
+	headerOverride, err := processHeaderOverride(info, c)
+	if err != nil {
+		return nil, err
+	}
+	applyHeaderOverrideToRequest(req, headerOverride)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -104,17 +235,18 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headers := req.Header
-	headerOverride, err := processHeaderOverride(info)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range headerOverride {
-		headers.Set(key, value)
-	}
+	applyPassThroughRequestHeadersIfEnabled(c, info, headers, []string{"Content-Type"})
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
+	// 这样可以覆盖默认的 Authorization header 设置
+	headerOverride, err := processHeaderOverride(info, c)
+	if err != nil {
+		return nil, err
+	}
+	applyHeaderOverrideToRequest(req, headerOverride)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -128,16 +260,23 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	targetHeader := http.Header{}
-	headerOverride, err := processHeaderOverride(info)
+	applyPassThroughRequestHeadersIfEnabled(c, info, targetHeader, []string{
+		"Sec-WebSocket-Key",
+		"Sec-WebSocket-Version",
+		"Sec-WebSocket-Extensions",
+	})
+	err = a.SetupRequestHeader(c, &targetHeader, info)
+	if err != nil {
+		return nil, fmt.Errorf("setup request header failed: %w", err)
+	}
+	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
+	// 这样可以覆盖默认的 Authorization header 设置
+	headerOverride, err := processHeaderOverride(info, c)
 	if err != nil {
 		return nil, err
 	}
 	for key, value := range headerOverride {
 		targetHeader.Set(key, value)
-	}
-	err = a.SetupRequestHeader(c, &targetHeader, info)
-	if err != nil {
-		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
@@ -311,9 +450,22 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 		return io.NopCloser(requestBody), nil
 	}
 
+	// Task 请求与其他请求保持一致：透传最低、BuildRequestHeader 默认、header override 最高。
+	if info != nil && info.ChannelSetting.PassThroughHeaderEnabled {
+		applyPassThroughRequestHeadersIfEnabled(c, info, req.Header, nil)
+	}
+
 	err = a.BuildRequestHeader(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
+	}
+
+	headerOverride, err := processHeaderOverride(info, c)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range headerOverride {
+		req.Header.Set(key, value)
 	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {

@@ -144,9 +144,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	if !success {
 		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[modelName]
 		if !ok {
-			modelPrice = 0.1
+			modelPrice = float64(common.PreConsumedQuota) / common.QuotaPerUnit
 		} else {
 			modelPrice = defaultPrice
+		}
+	}
+
+	// 处理 auto 分组：从 context 获取实际选中的分组
+	// 当使用 auto 分组时，Distribute 中间件会将实际选中的分组存储在 ContextKeyAutoGroup 中
+	if autoGroup, exists := common.GetContextKey(c, constant.ContextKeyAutoGroup); exists {
+		if groupStr, ok := autoGroup.(string); ok && groupStr != "" {
+			info.UsingGroup = groupStr
 		}
 	}
 
