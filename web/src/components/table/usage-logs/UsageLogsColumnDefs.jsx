@@ -729,7 +729,7 @@ export const getLogsColumns = ({
         );
       },
     },
-    isAdminUser && {
+    {
       key: COLUMN_KEYS.ACTION,
       title: t('操作'),
       dataIndex: 'actions',
