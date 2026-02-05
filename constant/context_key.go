@@ -62,7 +62,13 @@ const (
 	ContextKeyLoggedRequestBodyFull  ContextKey = "logged_request_body_full"
 	ContextKeyLoggedResponseBodyFull ContextKey = "logged_response_body_full"
 
+	// ContextKeyFileSourcesToCleanup stores file sources that need cleanup when request ends
+	ContextKeyFileSourcesToCleanup ContextKey = "file_sources_to_cleanup"
+
 	// ContextKeyAdminRejectReason stores an admin-only reject/block reason extracted from upstream responses.
 	// It is not returned to end users, but can be persisted into consume/error logs for debugging.
 	ContextKeyAdminRejectReason ContextKey = "admin_reject_reason"
+
+	// ContextKeyLanguage stores the user's language preference for i18n
+	ContextKeyLanguage ContextKey = "language"
 )
