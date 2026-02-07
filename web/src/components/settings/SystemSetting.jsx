@@ -43,6 +43,7 @@ import {
 } from '../../helpers';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
+import CustomOAuthSetting from './CustomOAuthSetting';
 
 const retentionPresets = ['1', '3', '7', '30', '90'];
 
@@ -1661,6 +1662,8 @@ const SystemSetting = () => {
                   </Button>
                 </Form.Section>
               </Card>
+
+              <CustomOAuthSetting serverAddress={inputs.ServerAddress} />
 
               <Card>
                 <Form.Section text={t('配置 WeChat Server')}>
