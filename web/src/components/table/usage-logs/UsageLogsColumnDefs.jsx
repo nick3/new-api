@@ -20,12 +20,12 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import {
   Avatar,
-  Button,
   Space,
   Tag,
   Tooltip,
   Popover,
   Typography,
+  Button,
 } from '@douyinfe/semi-ui';
 import {
   timestamp2string,
@@ -41,8 +41,8 @@ import {
   renderClaudeModelPrice,
   renderModelPrice,
 } from '../../../helpers';
-import { IconEyeOpened, IconStarStroked } from '@douyinfe/semi-icons';
-import { Route } from 'lucide-react';
+import { IconHelpCircle, IconEyeOpened } from '@douyinfe/semi-icons';
+import { Route, Sparkles } from 'lucide-react';
 
 const colors = [
   'amber',
@@ -308,6 +308,9 @@ export const getLogsColumns = ({
       render: (text, record, index) => {
         let isMultiKey = false;
         let multiKeyIndex = -1;
+        let content = t('渠道') + `：${record.channel}`;
+        let affinity = null;
+        let showMarker = false;
         let other = getLogOther(record.other);
         if (other?.admin_info) {
           let adminInfo = other.admin_info;
@@ -315,21 +318,71 @@ export const getLogsColumns = ({
             isMultiKey = true;
             multiKeyIndex = adminInfo.multi_key_index;
           }
+          if (
+            Array.isArray(adminInfo.use_channel) &&
+            adminInfo.use_channel.length > 0
+          ) {
+            content = t('渠道') + `：${adminInfo.use_channel.join('->')}`;
+          }
+          if (adminInfo.channel_affinity) {
+            affinity = adminInfo.channel_affinity;
+            showMarker = true;
+          }
         }
 
         return isAdminUser &&
           (record.type === 0 || record.type === 2 || record.type === 5) ? (
           <Space>
-            <Tooltip content={record.channel_name || t('未知渠道')}>
-              <span>
-                <Tag
-                  color={colors[parseInt(text) % colors.length]}
-                  shape='circle'
+            <span style={{ position: 'relative', display: 'inline-block' }}>
+              <Tooltip content={record.channel_name || t('未知渠道')}>
+                <span>
+                  <Tag
+                    color={colors[parseInt(text) % colors.length]}
+                    shape='circle'
+                  >
+                    {text}
+                  </Tag>
+                </span>
+              </Tooltip>
+              {showMarker && (
+                <Tooltip
+                  content={
+                    <div style={{ lineHeight: 1.6 }}>
+                      <div>{content}</div>
+                      {affinity ? (
+                        <div style={{ marginTop: 6 }}>
+                          {buildChannelAffinityTooltip(affinity, t)}
+                        </div>
+                      ) : null}
+                    </div>
+                  }
                 >
-                  {text}
-                </Tag>
-              </span>
-            </Tooltip>
+                  <span
+                    style={{
+                      position: 'absolute',
+                      right: -4,
+                      top: -4,
+                      lineHeight: 1,
+                      fontWeight: 600,
+                      color: '#f59e0b',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openChannelAffinityUsageCacheModal?.(affinity);
+                    }}
+                  >
+                    <Sparkles
+                      size={14}
+                      strokeWidth={2}
+                      color='currentColor'
+                      fill='currentColor'
+                    />
+                  </span>
+                </Tooltip>
+              )}
+            </span>
             {isMultiKey && (
               <Tag color='white' shape='circle'>
                 {multiKeyIndex}
@@ -521,6 +574,13 @@ export const getLogsColumns = ({
       title: (
         <div className='flex items-center gap-1'>
           {t('IP')}
+          <Tooltip
+            content={t(
+              '只有当用户设置开启IP记录时，才会进行请求和错误类型日志的IP记录',
+            )}
+          >
+            <IconHelpCircle className='text-gray-400 cursor-help' />
+          </Tooltip>
         </div>
       ),
       dataIndex: 'ip',
@@ -553,7 +613,6 @@ export const getLogsColumns = ({
           return <></>;
         }
         let content = t('渠道') + `：${record.channel}`;
-        let affinity = null;
         if (record.other !== '') {
           let other = JSON.parse(record.other);
           if (other === null) {
@@ -569,59 +628,15 @@ export const getLogsColumns = ({
               let useChannelStr = useChannel.join('->');
               content = t('渠道') + `：${useChannelStr}`;
             }
-            if (other.admin_info.channel_affinity) {
-              affinity = other.admin_info.channel_affinity;
-            }
           }
         }
-        return isAdminUser ? (
-          <Space>
-            <div>{content}</div>
-            {affinity ? (
-              <Tooltip
-                content={
-                  <div>
-                    {buildChannelAffinityTooltip(affinity, t)}
-                    <div style={{ marginTop: 6 }}>
-                      <Button
-                        theme='borderless'
-                        size='small'
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openChannelAffinityUsageCacheModal?.(affinity);
-                        }}
-                      >
-                        {t('查看详情')}
-                      </Button>
-                    </div>
-                  </div>
-                }
-              >
-                <span>
-                  <Tag
-                    className='channel-affinity-tag'
-                    color='cyan'
-                    shape='circle'
-                  >
-                    <span className='channel-affinity-tag-content'>
-                      <IconStarStroked style={{ fontSize: 13 }} />
-                      {t('优选')}
-                    </span>
-                  </Tag>
-                </span>
-              </Tooltip>
-            ) : null}
-          </Space>
-        ) : (
-          <></>
-        );
+        return isAdminUser ? <div>{content}</div> : <></>;
       },
     },
     {
       key: COLUMN_KEYS.DETAILS,
       title: t('详情'),
       dataIndex: 'content',
-      fixed: !isAdminUser ? 'right' : false,
       render: (text, record, index) => {
         let other = getLogOther(record.other);
         if (other == null || record.type !== 2) {
@@ -714,14 +729,14 @@ export const getLogsColumns = ({
               'openai',
             );
         return (
-            <Typography.Paragraph
-                ellipsis={{
-                  rows: 3,
-                }}
-                style={{ maxWidth: 240, whiteSpace: 'pre-line' }}
-            >
-              {content}
-            </Typography.Paragraph>
+          <Typography.Paragraph
+            ellipsis={{
+              rows: 3,
+            }}
+            style={{ maxWidth: 240, whiteSpace: 'pre-line' }}
+          >
+            {content}
+          </Typography.Paragraph>
         );
       },
     },
