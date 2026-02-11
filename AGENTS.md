@@ -121,6 +121,12 @@ Use `bun` as the preferred package manager and script runner for the frontend (`
 - `bun run build` for production build
 - `bun run i18n:*` for i18n tooling
 
+### Rule 4: New Channel StreamOptions Support
+
+When implementing a new channel:
+- Confirm whether the provider supports `StreamOptions`.
+- If supported, add the channel to `streamSupportedChannels`.
+
 ## Coding Style & Naming Conventions
 
 - Back-end code must pass `gofmt` and `go vet ./...`; keep packages single-purpose and exported identifiers in PascalCase, internals in camelCase.
