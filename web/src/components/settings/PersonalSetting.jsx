@@ -86,6 +86,7 @@ const PersonalSetting = () => {
     gotifyUrl: '',
     gotifyToken: '',
     gotifyPriority: 5,
+    upstreamModelUpdateNotifyEnabled: false,
     acceptUnsetModelRatioModel: false,
   });
 
@@ -157,6 +158,8 @@ const PersonalSetting = () => {
         gotifyToken: settings.gotify_token || '',
         gotifyPriority:
           settings.gotify_priority !== undefined ? settings.gotify_priority : 5,
+        upstreamModelUpdateNotifyEnabled:
+          settings.upstream_model_update_notify_enabled === true,
         acceptUnsetModelRatioModel:
           settings.accept_unset_model_ratio_model || false,
       });
@@ -424,6 +427,8 @@ const PersonalSetting = () => {
           const parsed = parseInt(notificationSettings.gotifyPriority);
           return isNaN(parsed) ? 5 : parsed;
         })(),
+        upstream_model_update_notify_enabled:
+          notificationSettings.upstreamModelUpdateNotifyEnabled === true,
         accept_unset_model_ratio_model:
           notificationSettings.acceptUnsetModelRatioModel,
       });

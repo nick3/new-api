@@ -344,6 +344,10 @@ func copyHeadersExcept(dst, src http.Header, deny map[string]struct{}) {
 	}
 }
 
+func ResolveHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]string, error) {
+	return processHeaderOverride(info, c)
+}
+
 func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {
 	if req == nil {
 		return
