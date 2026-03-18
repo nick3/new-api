@@ -97,9 +97,9 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
 	info.FinalRequestRelayFormat = types.RelayFormatClaude
 	if info.IsStream {
-		return ClaudeStreamHandler(c, resp, info, a.RequestMode)
+		return ClaudeStreamHandler(c, resp, info)
 	}
-	return ClaudeHandler(c, resp, info, a.RequestMode)
+	return ClaudeHandler(c, resp, info)
 }
 
 func (a *Adaptor) GetModelList() []string {

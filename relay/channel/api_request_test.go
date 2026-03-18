@@ -191,6 +191,7 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
 
 func TestCopyHeadersExcept_FiltersAuthHopByHopAndConnectionTokens(t *testing.T) {
 	src := http.Header{}
