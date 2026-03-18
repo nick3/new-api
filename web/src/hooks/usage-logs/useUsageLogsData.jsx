@@ -40,6 +40,90 @@ import {
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
+import {
+  safeParseJson,
+  formatJsonString,
+  splitStreamingResponse,
+} from '../../components/table/usage-logs/detail/logDetailPrimitives';
+
+const renderPreBlock = (content) => {
+  if (!content) {
+    return null;
+  }
+  return (
+    <pre className='whitespace-pre-wrap break-all font-mono text-xs leading-5'>
+      {content}
+    </pre>
+  );
+};
+
+const collectChoiceContent = (choices = []) => {
+  const segments = [];
+  choices.forEach((choice) => {
+    if (choice?.message?.content) {
+      segments.push(choice.message.content);
+    }
+    if (typeof choice?.delta?.content === 'string') {
+      segments.push(choice.delta.content);
+    }
+  });
+  return segments.join('');
+};
+
+const buildRequestNode = (detail) => {
+  if (!detail?.request_body) {
+    return null;
+  }
+  return renderPreBlock(formatJsonString(detail.request_body));
+};
+
+const buildResponseNode = (detail, t) => {
+  if (!detail?.response_body || typeof detail.response_body !== 'string') {
+    return null;
+  }
+
+  const trimmed = detail.response_body.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const single = safeParseJson(trimmed);
+  if (single) {
+    const responseText = collectChoiceContent(single.choices || []);
+    const parts = [];
+    if (responseText) {
+      parts.push(`${t('回复文本')}: ${responseText}`);
+    }
+    parts.push(`${t('原始数据')}:\n${JSON.stringify(single, null, 2)}`);
+    return renderPreBlock(parts.join('\n\n'));
+  }
+
+  const streamObjects = splitStreamingResponse(trimmed);
+  if (streamObjects.length === 0) {
+    return renderPreBlock(trimmed);
+  }
+
+  const aggregatedText = streamObjects
+    .map((obj) => collectChoiceContent(obj?.choices || []))
+    .join('')
+    .trim();
+  const usageObject = [...streamObjects].reverse().find((obj) => obj?.usage);
+
+  const parts = [];
+  if (aggregatedText) {
+    parts.push(`${t('回复文本')}: ${aggregatedText}`);
+  }
+  if (usageObject?.usage) {
+    parts.push(`${t('令牌统计')}:\n${JSON.stringify(usageObject.usage, null, 2)}`);
+  }
+  parts.push(
+    `${t('原始数据')}:\n${streamObjects
+      .map((obj) => JSON.stringify(obj, null, 2))
+      .join('\n\n')}`,
+  );
+
+  return renderPreBlock(parts.join('\n\n'));
+};
 
 export const useLogsData = () => {
   const { t } = useTranslation();
