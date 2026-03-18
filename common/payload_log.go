@@ -137,6 +137,18 @@ func formatPayloadForLog(data []byte) string {
 	return applyLogLimit(string(data))
 }
 
+// ResolvePayloadForLogDetail 返回适合持久化到日志详情的请求/响应体：
+// 二进制内容保留占位说明，文本内容保留完整字符串，不做预览截断。
+func ResolvePayloadForLogDetail(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	if isBinaryPayload(data) {
+		return fmt.Sprintf("[binary payload omitted: %d bytes]", len(data))
+	}
+	return string(data)
+}
+
 func setPayloadIfEmpty(c *gin.Context, key constant.ContextKey, value string) {
 	if value == "" {
 		return
@@ -155,6 +167,14 @@ func CapturePayloadForLog(c *gin.Context, key constant.ContextKey, data []byte) 
 	if len(data) > 0 && !isBinaryPayload(data) {
 		setFullPayload(c, key, []string{string(data)})
 	}
+	return preview
+}
+
+// CapturePayloadPreviewForLog 仅记录预览内容，不写入 full payload。
+// 用于大请求或仅需采样的场景，避免把截断/占位文本误当作完整请求体持久化。
+func CapturePayloadPreviewForLog(c *gin.Context, key constant.ContextKey, data []byte) string {
+	preview := formatPayloadForLog(data)
+	setPayloadIfEmpty(c, key, preview)
 	return preview
 }
 

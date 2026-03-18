@@ -161,6 +161,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if common.DebugEnabled {
 			println("requestBody: ", string(jsonData))
 		}
+		captureStructuredRequestBodyForLog(c, jsonData)
 		requestBody = bytes.NewBuffer(jsonData)
 	}
 

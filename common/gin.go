@@ -53,7 +53,7 @@ func captureRequestBodyPreview(c *gin.Context, storage BodyStorage) {
 	if err != nil {
 		return
 	}
-	CapturePayloadForLog(c, constant.ContextKeyLoggedRequestBody, preview)
+	CapturePayloadPreviewForLog(c, constant.ContextKeyLoggedRequestBody, preview)
 }
 
 func GetRequestBody(c *gin.Context) (io.Seeker, error) {

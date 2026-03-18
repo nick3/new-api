@@ -105,6 +105,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		if common.DebugEnabled {
 			println("requestBody: ", string(jsonData))
 		}
+		captureStructuredRequestBodyForLog(c, jsonData)
 		requestBody = bytes.NewBuffer(jsonData)
 	}
 
