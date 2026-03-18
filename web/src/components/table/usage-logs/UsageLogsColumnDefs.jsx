@@ -877,7 +877,6 @@ export const getLogsColumns = ({
       key: COLUMN_KEYS.DETAILS,
       title: t('详情'),
       dataIndex: 'content',
-      fixed: 'right',
       width: 200,
       render: (text, record, index) => {
         const detailSummary = getUsageLogDetailSummary(
