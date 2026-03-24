@@ -3348,6 +3348,8 @@
     "{{days}}天": "{{days}} day(s)",
     "请输入自定义保留天数": "Enter custom retention days",
     "保存日志保留设置": "Save Retention Settings",
-    "保留时间必须是非负整数": "Retention must be a non-negative integer"
+    "保留时间必须是非负整数": "Retention must be a non-negative integer",
+    "例如：gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$": "Example: gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$",
+    "支持精确匹配；使用 regex: 开头可按正则匹配。": "Supports exact matching. Use a regex: prefix for regex matching."
   }
 }
