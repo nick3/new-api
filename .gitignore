@@ -32,3 +32,5 @@ data/
 .gopath
 /.serena
 /.trae
+
+token_estimator_test.go
