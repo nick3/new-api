@@ -2,6 +2,7 @@ import type { UsageLog } from '../data/schema'
 
 export const DETAIL_TRUNCATE_BYTES = 500 * 1024
 export const DETAIL_PREVIEW_BYTES = 100 * 1024
+const DETAIL_STREAM_EVENT_LIMIT = 5000
 
 type DetailPayloadSource = 'request' | 'response'
 type JsonRecord = Record<string, unknown>
@@ -68,6 +69,17 @@ function firstString(...values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === 'string')
 }
 
+function decodeEscapedText(value: string): string {
+  if (!/(\\u[0-9a-fA-F]{4})|(\\n)|(\\r)|(\\t)/.test(value)) return value
+  return value
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, code: string) =>
+      String.fromCharCode(Number.parseInt(code, 16))
+    )
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+}
+
 function stringifyValue(value: unknown): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return value
@@ -77,7 +89,7 @@ function stringifyValue(value: unknown): string {
 
 function contentText(value: unknown): string {
   if (value === null || value === undefined) return ''
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') return decodeEscapedText(value)
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
 
   if (Array.isArray(value)) {
@@ -90,9 +102,18 @@ function contentText(value: unknown): string {
   if (!isRecord(value)) return stringifyValue(value)
 
   const type = stringValue(value.type)
-  const directText = firstString(value.text, value.content, value.input, value.output)
-  if (directText) return type ? `[${type}] ${directText}` : directText
+  const directText = firstString(
+    value.text,
+    value.content,
+    value.input,
+    value.output,
+    value.value,
+    value.data
+  )
+  if (directText) return type ? `[${type}] ${decodeEscapedText(directText)}` : decodeEscapedText(directText)
 
+  if (isRecord(value.message)) return contentText(value.message)
+  if (isRecord(value.delta)) return contentText(value.delta)
   if (isRecord(value.functionCall)) {
     return `[functionCall] ${stringifyValue(value.functionCall)}`
   }
@@ -128,6 +149,26 @@ function pushMessage(
   })
 }
 
+function pushMessageFromRecord(
+  messages: DetailMessage[],
+  source: DetailPayloadSource,
+  value: JsonRecord,
+  fallbackRole: string
+) {
+  const role = stringValue(value.role) || fallbackRole
+  const content =
+    value.content ??
+    value.text ??
+    value.message ??
+    value.delta ??
+    value.output ??
+    value.tool_calls ??
+    value.function_call ??
+    value.result ??
+    value
+  pushMessage(messages, source, role, content, stringValue(value.name))
+}
+
 function appendOpenAiMessages(
   messages: DetailMessage[],
   source: DetailPayloadSource,
@@ -155,14 +196,22 @@ function appendInputMessages(
     return
   }
 
+  if (isRecord(value.input)) {
+    pushMessageFromRecord(messages, source, value.input, 'user')
+    return
+  }
+
   for (const item of asArray(value.input)) {
+    if (typeof item === 'string') {
+      pushMessage(messages, source, 'user', item)
+      continue
+    }
     if (!isRecord(item)) continue
-    pushMessage(
+    pushMessageFromRecord(
       messages,
       source,
-      stringValue(item.role) || stringValue(item.type) || 'user',
-      item.content ?? item.text ?? item,
-      stringValue(item.name)
+      item,
+      stringValue(item.role) || stringValue(item.type) || 'user'
     )
   }
 }
@@ -202,21 +251,11 @@ function appendChoiceMessages(
     if (!isRecord(choice)) continue
 
     if (isRecord(choice.message)) {
-      pushMessage(
-        messages,
-        source,
-        stringValue(choice.message.role) || 'assistant',
-        choice.message.content ?? choice.message.tool_calls ?? choice.message
-      )
+      pushMessageFromRecord(messages, source, choice.message, 'assistant')
     }
 
     if (isRecord(choice.delta)) {
-      pushMessage(
-        messages,
-        source,
-        stringValue(choice.delta.role) || 'assistant',
-        choice.delta.content ?? choice.delta.tool_calls ?? choice.delta
-      )
+      pushMessageFromRecord(messages, source, choice.delta, 'assistant')
     }
 
     if (choice.text) {
@@ -248,12 +287,27 @@ function appendOutputMessages(
 ) {
   for (const item of asArray(value.output)) {
     if (!isRecord(item)) continue
-    if (item.type !== 'message' && !item.role) continue
-    pushMessage(
+    pushMessageFromRecord(
       messages,
       source,
-      stringValue(item.role) || 'assistant',
-      item.content ?? item.text ?? item
+      item,
+      stringValue(item.role) || stringValue(value.role) || 'assistant'
+    )
+  }
+}
+
+function appendArrayMessages(
+  messages: DetailMessage[],
+  source: DetailPayloadSource,
+  value: unknown
+) {
+  for (const item of asArray(value)) {
+    if (!isRecord(item)) continue
+    pushMessageFromRecord(
+      messages,
+      source,
+      item,
+      stringValue(item.role) || (source === 'request' ? 'user' : 'assistant')
     )
   }
 }
@@ -263,6 +317,10 @@ function appendMessagesFromPayload(
   source: DetailPayloadSource,
   value: unknown
 ) {
+  if (Array.isArray(value)) {
+    appendArrayMessages(messages, source, value)
+    return
+  }
   if (!isRecord(value)) return
 
   appendClaudeMessages(messages, source, value)
@@ -272,6 +330,21 @@ function appendMessagesFromPayload(
   appendChoiceMessages(messages, source, value)
   appendOutputMessages(messages, source, value)
 
+  if (typeof value.output_text === 'string' || typeof value.outputText === 'string') {
+    pushMessage(messages, source, 'assistant', value.output_text ?? value.outputText)
+  }
+  if (isRecord(value.message)) {
+    pushMessageFromRecord(messages, source, value.message, 'assistant')
+  }
+  if (isRecord(value.result)) {
+    pushMessageFromRecord(messages, source, value.result, 'assistant')
+  }
+  if (typeof value.completion === 'string') {
+    pushMessage(messages, source, 'assistant', value.completion)
+  }
+  if (typeof value.reply === 'string') {
+    pushMessage(messages, source, 'assistant', value.reply)
+  }
   if (typeof value.prompt === 'string') {
     pushMessage(messages, source, 'user', value.prompt)
   }
@@ -385,6 +458,138 @@ function appendToolsFromPayload(
   appendToolCalls(entries, source, value)
 }
 
+function looksLikeStreamObject(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  if (typeof value.type === 'string') {
+    return (
+      value.type.startsWith('response.') ||
+      value.type.startsWith('message_') ||
+      value.type.startsWith('content_block_') ||
+      value.type.startsWith('input_json_')
+    )
+  }
+  if (value.object === 'chat.completion.chunk') return true
+  return Array.isArray(value.choices) && value.choices.some((choice) => isRecord(choice) && isRecord(choice.delta))
+}
+
+function limitStreamObjects(events: unknown[]): unknown[] {
+  return events.slice(0, DETAIL_STREAM_EVENT_LIMIT)
+}
+
+function streamObjectsFromPayload(payload: ParsedPayload): unknown[] {
+  if (payload.isTruncated) return []
+
+  if (looksLikeStreamObject(payload.json)) return [payload.json]
+
+  if (Array.isArray(payload.json)) {
+    const direct = payload.json.filter(looksLikeStreamObject)
+    if (direct.length > 0) return limitStreamObjects(direct)
+
+    for (const item of payload.json) {
+      if (!isRecord(item)) continue
+      const nested = item.events ?? item.data ?? item.chunks
+      if (Array.isArray(nested) && nested.some(looksLikeStreamObject)) {
+        return limitStreamObjects(nested.filter(looksLikeStreamObject))
+      }
+    }
+  }
+
+  if (isRecord(payload.json)) {
+    const nested = payload.json.events ?? payload.json.data ?? payload.json.chunks
+    if (Array.isArray(nested) && nested.some(looksLikeStreamObject)) {
+      return limitStreamObjects(nested.filter(looksLikeStreamObject))
+    }
+  }
+
+  if (!payload.json) return limitStreamObjects(splitSSE(payload.raw))
+  return []
+}
+
+function appendStreamMessages(messages: DetailMessage[], payload: ParsedPayload) {
+  const events = streamObjectsFromPayload(payload)
+  if (events.length === 0) return
+
+  if (events.some((event) => isRecord(event) && Array.isArray(event.choices))) {
+    let role = 'assistant'
+    let content = ''
+    let reasoning = ''
+    const toolCalls = new Map<number, JsonRecord>()
+
+    for (const event of events) {
+      if (!isRecord(event) || !Array.isArray(event.choices)) continue
+      const choice = event.choices.find(isRecord)
+      if (!choice || !isRecord(choice.delta)) continue
+      const delta = choice.delta
+      role = stringValue(delta.role) || role
+      content += stringValue(delta.content) || ''
+      reasoning += stringValue(delta.reasoning_content) || ''
+
+      for (const [fallbackIndex, call] of asArray(delta.tool_calls).entries()) {
+        if (!isRecord(call)) continue
+        const index = typeof call.index === 'number' ? call.index : fallbackIndex
+        const existing = toolCalls.get(index) ?? {}
+        const existingFunction = isRecord(existing.function) ? existing.function : {}
+        const nextFunction = isRecord(call.function) ? call.function : {}
+        toolCalls.set(index, {
+          ...existing,
+          ...call,
+          function: {
+            ...existingFunction,
+            ...nextFunction,
+            arguments: `${stringValue(existingFunction.arguments) || ''}${stringValue(nextFunction.arguments) || ''}`,
+          },
+        })
+      }
+    }
+
+    const parts = [reasoning && `[reasoning] ${reasoning}`, content]
+      .filter(Boolean)
+      .join('\n')
+    const calls = Array.from(toolCalls.values())
+    const messageContent = calls.length > 0 ? [parts, stringifyValue(calls)].filter(Boolean).join('\n') : parts
+    pushMessage(messages, 'response', role, messageContent)
+    return
+  }
+
+  let role = 'assistant'
+  let content = ''
+  let reasoning = ''
+  const outputItems: unknown[] = []
+
+  for (const event of events) {
+    if (!isRecord(event)) continue
+    role = stringValue(event.role) || (isRecord(event.message) ? stringValue(event.message.role) : undefined) || role
+
+    const type = stringValue(event.type)
+    if (type === 'content_block_start' && isRecord(event.content_block)) {
+      outputItems.push(event.content_block)
+      continue
+    }
+    if (type === 'content_block_delta' && isRecord(event.delta)) {
+      content += stringValue(event.delta.text) || stringValue(event.delta.thinking) || stringValue(event.delta.partial_json) || ''
+      continue
+    }
+    if (type === 'response.output_text.delta' || type === 'response.output_text.done') {
+      content += stringValue(event.delta) || stringValue(event.text) || stringValue(event.output_text) || ''
+      continue
+    }
+    if (type?.includes('reasoning')) {
+      reasoning += stringValue(event.delta) || stringValue(event.text) || stringValue(event.reasoning_text) || ''
+    }
+    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+      outputItems.push(event.item ?? event.output_item ?? event.outputItem ?? event.output)
+    }
+    if (isRecord(event.response)) {
+      appendMessagesFromPayload(messages, 'response', event.response)
+    }
+  }
+
+  const parts = [reasoning && `[reasoning] ${reasoning}`, content, outputItems.length > 0 && contentText(outputItems)]
+    .filter(Boolean)
+    .join('\n')
+  pushMessage(messages, 'response', role, parts)
+}
+
 function describeStreamEvent(value: unknown): {
   event?: string
   role?: string
@@ -487,7 +692,13 @@ export function extractDetailMessages(
 ): DetailMessage[] {
   const messages: DetailMessage[] = []
   appendMessagesFromPayload(messages, 'request', requestPayload.json)
-  appendMessagesFromPayload(messages, 'response', responsePayload.json)
+
+  if (streamObjectsFromPayload(responsePayload).length > 0) {
+    appendStreamMessages(messages, responsePayload)
+  } else {
+    appendMessagesFromPayload(messages, 'response', responsePayload.json)
+  }
+
   return messages
 }
 
@@ -521,9 +732,7 @@ export function splitSSE(raw: string | null | undefined): unknown[] {
 }
 
 export function extractStreamChunks(payload: ParsedPayload): DetailStreamChunk[] {
-  if (payload.isTruncated) return []
-
-  return splitSSE(payload.raw).map((event, index) => ({
+  return streamObjectsFromPayload(payload).map((event, index) => ({
     id: `stream-${index}`,
     index,
     raw: stringifyValue(event),

@@ -76,6 +76,60 @@ describe('usage log detail parsing', () => {
     expect(chunks[1].finishReason).toBe('stop')
   })
 
+  test('aggregates SSE chunks into response messages', () => {
+    const request = parsePayload(
+      JSON.stringify({ messages: [{ role: 'user', content: 'Hi' }] })
+    )
+    const response = parsePayload(
+      'data: {"choices":[{"delta":{"role":"assistant","content":"Hel"}}]}\n\n' +
+        'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}]}\n\n' +
+        'data: [DONE]\n\n'
+    )
+
+    const messages = extractDetailMessages(request, response)
+    expect(messages.map((item) => item.content)).toEqual(['Hi', 'Hello'])
+  })
+
+  test('extracts common response message fields', () => {
+    const request = parsePayload(JSON.stringify({ prompt: 'Tell me a joke' }))
+    const response = parsePayload(JSON.stringify({ output_text: 'Sure.' }))
+
+    const messages = extractDetailMessages(request, response)
+    expect(messages.map((item) => item.content)).toEqual([
+      'Tell me a joke',
+      'Sure.',
+    ])
+  })
+
+  test('aggregates Claude-style stream events into response messages', () => {
+    const request = parsePayload(JSON.stringify({ messages: [] }))
+    const response = parsePayload(
+      JSON.stringify([
+        { type: 'message_start', message: { role: 'assistant' } },
+        { type: 'content_block_delta', delta: { text: 'Hel' } },
+        { type: 'content_block_delta', delta: { text: 'lo' } },
+      ])
+    )
+
+    const messages = extractDetailMessages(request, response)
+    expect(messages.map((item) => item.content)).toEqual(['Hello'])
+  })
+
+  test('aggregates Responses API stream events into response messages', () => {
+    const request = parsePayload(JSON.stringify({ input: 'Hi' }))
+    const response = parsePayload(
+      JSON.stringify({
+        events: [
+          { type: 'response.output_text.delta', delta: 'He' },
+          { type: 'response.output_text.delta', delta: 'llo' },
+        ],
+      })
+    )
+
+    const messages = extractDetailMessages(request, response)
+    expect(messages.map((item) => item.content)).toEqual(['Hi', 'Hello'])
+  })
+
   test('does not parse stream chunks from truncated payloads', () => {
     const payload = parsePayload(
       'data: {"choices":[{"delta":{"content":"x"}}]}',

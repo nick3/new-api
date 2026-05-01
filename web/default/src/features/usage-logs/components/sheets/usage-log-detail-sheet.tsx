@@ -739,14 +739,6 @@ export function UsageLogDetailSheet({
                 <>
                   <TabsContent value='overview' className='mt-0 space-y-4'>
                     <DetailGrid items={overviewItems} />
-                    <PayloadPanels
-                      requestPayload={requestPayload}
-                      responsePayload={responsePayload}
-                      showRaw={showRaw}
-                      copiedKey={copiedKey}
-                      downloadPrefix={downloadPrefix}
-                      onCopy={handleCopy}
-                    />
                   </TabsContent>
 
                   <TabsContent value='raw' className='mt-0'>
