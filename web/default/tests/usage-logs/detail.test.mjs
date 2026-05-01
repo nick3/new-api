@@ -26,6 +26,64 @@ describe('usage log detail parsing', () => {
       .toEqual(['Be concise', 'Hello', 'Hi'])
   })
 
+  test('extracts Chat Completions request messages from truncated payloads', () => {
+    const request = parsePayload(
+      JSON.stringify({
+        messages: [
+          { role: 'system', content: 'Be concise' },
+          { role: 'user', content: `Hello ${'x'.repeat(80)}` },
+        ],
+      }),
+      20,
+      30,
+      { parseJsonWhenTruncated: true }
+    )
+    const response = parsePayload('{}')
+
+    expect(request.isTruncated).toBe(true)
+    expect(extractDetailMessages(request, response).map((item) => item.role))
+      .toEqual(['system', 'user'])
+  })
+
+  test('extracts Responses API request input messages', () => {
+    const request = parsePayload(
+      JSON.stringify({
+        input: [
+          {
+            role: 'developer',
+            content: [{ type: 'input_text', text: 'Follow policy' }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Search docs' }],
+          },
+        ],
+      })
+    )
+    const response = parsePayload('{}')
+
+    expect(extractDetailMessages(request, response).map((item) => item.content))
+      .toEqual(['Follow policy', 'Search docs'])
+  })
+
+  test('extracts Messages API system and user request messages', () => {
+    const request = parsePayload(
+      JSON.stringify({
+        system: [{ type: 'text', text: 'You are helpful' }],
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Hello Claude' }],
+          },
+        ],
+      })
+    )
+    const response = parsePayload('{}')
+
+    expect(extractDetailMessages(request, response).map((item) => item.content))
+      .toEqual(['You are helpful', 'Hello Claude'])
+  })
+
   test('extracts tool definitions and tool calls', () => {
     const request = parsePayload(
       JSON.stringify({

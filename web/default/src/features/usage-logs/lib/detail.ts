@@ -42,6 +42,10 @@ export interface DetailStreamChunk {
   raw: string
 }
 
+interface ParsePayloadOptions {
+  parseJsonWhenTruncated?: boolean
+}
+
 export function hasSavedDetail(log: UsageLog): boolean {
   const requestBody = log.detail?.request_body?.trim() ?? ''
   const responseBody = log.detail?.response_body?.trim() ?? ''
@@ -998,13 +1002,14 @@ function describeStreamEvent(value: unknown): {
 export function parsePayload(
   raw: string | null | undefined,
   previewBytes = DETAIL_PREVIEW_BYTES,
-  truncateAt = DETAIL_TRUNCATE_BYTES
+  truncateAt = DETAIL_TRUNCATE_BYTES,
+  options: ParsePayloadOptions = {}
 ): ParsedPayload {
   const value = raw ?? ''
   const isTruncated = value.length > truncateAt
   const preview = isTruncated ? truncateForPreview(value, previewBytes) : value
 
-  if (isTruncated) {
+  if (isTruncated && !options.parseJsonWhenTruncated) {
     return {
       raw: value,
       preview,
@@ -1020,7 +1025,7 @@ export function parsePayload(
     return {
       raw: value,
       preview,
-      formatted: JSON.stringify(json, null, 2),
+      formatted: isTruncated ? preview : JSON.stringify(json, null, 2),
       json,
       isJson: true,
       isTruncated,

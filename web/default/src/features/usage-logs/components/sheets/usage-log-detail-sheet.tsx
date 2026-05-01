@@ -421,7 +421,7 @@ function MessageListSection({
               type='button'
               aria-pressed={selected}
               className={cn(
-                'focus-visible:ring-ring block w-full max-w-full min-w-0 overflow-hidden rounded-lg px-4 py-1.5 text-left transition-colors ring-1 ring-transparent focus-visible:ring-2 focus-visible:outline-none',
+                'focus-visible:ring-ring box-border block w-full max-w-full min-w-0 overflow-hidden rounded-lg px-4 py-1.5 text-left transition-colors ring-1 ring-transparent focus-visible:ring-2 focus-visible:outline-none',
                 selected
                   ? roleStyle.active
                   : 'hover:bg-background/80'
@@ -498,8 +498,8 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
   return (
     <div className='grid min-h-[520px] overflow-hidden rounded-xl border bg-background lg:grid-cols-[220px_minmax(0,1fr)]'>
       <aside className='bg-muted/35 min-w-0 overflow-hidden border-b p-2 lg:border-r lg:border-b-0'>
-        <ScrollArea className='max-h-[280px] min-w-0 pr-1 lg:h-[560px] lg:max-h-none'>
-          <div className='min-w-0 space-y-6 overflow-hidden pb-2'>
+        <div className='max-h-[280px] w-full min-w-0 overflow-y-auto overflow-x-hidden pr-1 lg:h-[560px] lg:max-h-none'>
+          <div className='w-full min-w-0 space-y-6 overflow-hidden pb-2'>
             <MessageListSection
               title={t('Request')}
               messages={requestMessages}
@@ -513,7 +513,7 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
               onSelect={setSelectedMessage}
             />
           </div>
-        </ScrollArea>
+        </div>
       </aside>
 
       <section className='bg-muted/10 min-w-0'>
@@ -723,7 +723,8 @@ export function UsageLogDetailSheet({
       parsePayload(
         log?.detail?.request_body,
         DETAIL_PREVIEW_BYTES,
-        DETAIL_TRUNCATE_BYTES
+        DETAIL_TRUNCATE_BYTES,
+        { parseJsonWhenTruncated: true }
       ),
     [log?.detail?.request_body]
   )
