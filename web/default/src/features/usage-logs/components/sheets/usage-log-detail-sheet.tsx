@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Check, Copy, Download, FileText } from 'lucide-react'
+import { Check, ChevronDown, Copy, Download, FileText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
   formatLogQuota,
@@ -11,6 +11,11 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import {
   Empty,
@@ -253,7 +258,7 @@ function PayloadPanels({
   const { t } = useTranslation()
 
   return (
-    <div className='grid min-h-0 gap-4 lg:grid-cols-2'>
+    <div className='grid min-h-0 gap-4'>
       <PayloadPanel
         title={t('Request Body')}
         payload={requestPayload}
@@ -314,6 +319,133 @@ function DetailPre({ value }: { value: string }) {
       {value}
     </pre>
   )
+}
+
+type DetailJsonRecord = Record<string, unknown>
+
+interface ToolParameterInfo {
+  name: string
+  type?: string
+  description?: string
+  required: boolean
+}
+
+interface ToolDisplayInfo {
+  id?: string
+  description?: string
+  parameters: ToolParameterInfo[]
+}
+
+function isDetailRecord(value: unknown): value is DetailJsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function firstDetailString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string')
+}
+
+function parseToolContent(content: string): DetailJsonRecord | null {
+  try {
+    const parsed = JSON.parse(content) as unknown
+    return isDetailRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
+function formatParameterType(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.filter(Boolean).join(' | ')
+  return undefined
+}
+
+function parseArgumentKeys(value: unknown): string[] {
+  if (typeof value === 'string') {
+    const parsed = parseToolContent(value)
+    return parsed ? Object.keys(parsed) : []
+  }
+  if (isDetailRecord(value)) return Object.keys(value)
+  return []
+}
+
+function getToolSchema(record: DetailJsonRecord): DetailJsonRecord | null {
+  const functionRecord = isDetailRecord(record.function) ? record.function : null
+  const candidates = [
+    record.input_schema,
+    record.inputSchema,
+    record.parameters,
+    record.schema,
+    record.parametersJsonSchema,
+    functionRecord?.input_schema,
+    functionRecord?.inputSchema,
+    functionRecord?.parameters,
+  ]
+
+  return candidates.find(isDetailRecord) ?? null
+}
+
+function getToolArgumentKeys(record: DetailJsonRecord): string[] {
+  const functionRecord = isDetailRecord(record.function) ? record.function : null
+  const candidates = [
+    record.arguments,
+    record.input,
+    record.payload,
+    record.input_json,
+    functionRecord?.arguments,
+    functionRecord?.input,
+  ]
+
+  return candidates.flatMap(parseArgumentKeys)
+}
+
+function getToolParameters(record: DetailJsonRecord): ToolParameterInfo[] {
+  const schema = getToolSchema(record)
+  const properties = isDetailRecord(schema?.properties) ? schema.properties : null
+
+  if (properties) {
+    const required = new Set(stringArray(schema?.required))
+    return Object.entries(properties).map(([name, value]) => {
+      const property = isDetailRecord(value) ? value : {}
+      return {
+        name,
+        type: formatParameterType(property.type),
+        description: firstDetailString(property.description, property.title),
+        required: required.has(name),
+      }
+    })
+  }
+
+  return Array.from(new Set(getToolArgumentKeys(record))).map((name) => ({
+    name,
+    required: false,
+  }))
+}
+
+function getToolDisplayInfo(entry: DetailToolEntry): ToolDisplayInfo {
+  const record = parseToolContent(entry.content)
+  if (!record) return { parameters: [] }
+
+  const functionRecord = isDetailRecord(record.function) ? record.function : null
+
+  return {
+    id: firstDetailString(
+      record.id,
+      record.tool_call_id,
+      record.toolCallId,
+      record.tool_use_id,
+      record.toolUseId,
+      record.call_id,
+      record.callId
+    ),
+    description: firstDetailString(record.description, functionRecord?.description),
+    parameters: getToolParameters(record),
+  }
 }
 
 const messageRoleStyles: Record<
@@ -496,9 +628,9 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
   }
 
   return (
-    <div className='grid min-h-[520px] overflow-hidden rounded-xl border bg-background lg:grid-cols-[220px_minmax(0,1fr)]'>
-      <aside className='bg-muted/35 min-w-0 overflow-hidden border-b p-2 lg:border-r lg:border-b-0'>
-        <div className='max-h-[280px] w-full min-w-0 overflow-y-auto overflow-x-hidden pr-1 lg:h-[560px] lg:max-h-none'>
+    <div className='grid h-full min-h-[520px] overflow-hidden rounded-xl border bg-background lg:grid-cols-[220px_minmax(0,1fr)]'>
+      <aside className='bg-muted/35 min-h-0 min-w-0 overflow-hidden border-b p-2 lg:border-r lg:border-b-0'>
+        <div className='h-full max-h-[280px] w-full min-w-0 overflow-y-auto overflow-x-hidden pr-1 lg:max-h-none'>
           <div className='w-full min-w-0 space-y-6 overflow-hidden pb-2'>
             <MessageListSection
               title={t('Request')}
@@ -516,8 +648,8 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
         </div>
       </aside>
 
-      <section className='bg-muted/10 min-w-0'>
-        <div className='flex flex-wrap items-center justify-between gap-3 px-4 py-3'>
+      <section className='bg-muted/10 flex min-h-0 min-w-0 flex-col'>
+        <div className='flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-3'>
           <Badge
             className={cn(
               'h-10 min-w-20 rounded-full px-5 text-sm font-medium',
@@ -578,8 +710,8 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
           </div>
         </div>
 
-        <div className='space-y-4 px-4 pt-2 pb-4'>
-          <Card className='gap-4 rounded-3xl border bg-card p-4 shadow-sm'>
+        <div className='flex min-h-0 flex-1 px-4 pt-2 pb-4'>
+          <Card className='flex min-h-0 flex-1 flex-col gap-4 rounded-3xl border bg-card p-4 shadow-sm'>
             <div className='space-y-1.5 pr-4'>
               <p className='text-xs font-medium text-foreground'>
                 {viewMode === 'json' ? t('JSON') : t('Content')}
@@ -599,7 +731,7 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
                 )}
               </div>
             </div>
-            <ScrollArea className='max-h-[420px] w-full'>
+            <ScrollArea className='min-h-0 w-full flex-1'>
               <DetailPre value={selectedContent} />
               <ScrollBar orientation='horizontal' />
             </ScrollArea>
@@ -623,17 +755,126 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
   }
 
   return (
-    <div className='space-y-3'>
-      {entries.map((entry) => (
-        <SectionCard
-          key={entry.id}
-          title={entry.name}
-          badge={`${t(entry.source === 'request' ? 'Request' : 'Response')} · ${t(entry.kind)}`}
-        >
-          <DetailPre value={entry.content} />
-        </SectionCard>
-      ))}
-    </div>
+    <section className='space-y-3'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <h3 className='text-sm font-semibold'>{t('Tool List')}</h3>
+        <Badge variant='outline' className='border-orange-500 text-orange-500'>
+          {t('Quantity')}: {entries.length}
+        </Badge>
+      </div>
+      <div className='rounded-lg border'>
+        {entries.map((entry) => {
+          const info = getToolDisplayInfo(entry)
+          const parameterSummary = info.parameters.map((parameter) => parameter.name)
+
+          return (
+            <Collapsible key={entry.id} className='group border-b last:border-b-0'>
+              <CollapsibleTrigger asChild>
+                <button
+                  type='button'
+                  className='hover:bg-muted/40 focus-visible:ring-ring flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none data-[state=open]:bg-muted/50'
+                >
+                  <div className='min-w-0 flex-1 font-medium'>
+                    <span className='break-words'>{entry.name}</span>
+                    {info.id && (
+                      <span className='text-muted-foreground ms-2 text-xs'>
+                        ({info.id})
+                      </span>
+                    )}
+                  </div>
+                  <div className='hidden min-w-0 flex-wrap justify-end gap-2 sm:flex'>
+                    {parameterSummary.length > 0 ? (
+                      parameterSummary.map((parameter) => (
+                        <Badge
+                          key={parameter}
+                          variant='outline'
+                          className='border-blue-500/80 text-blue-500'
+                        >
+                          {parameter}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className='text-muted-foreground text-xs'>
+                        {t('No parameters')}
+                      </span>
+                    )}
+                  </div>
+                  <ChevronDown className='text-muted-foreground size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180' />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className='space-y-4 px-4 pb-4'>
+                  <div className='flex flex-wrap gap-2 sm:hidden'>
+                    {parameterSummary.length > 0 ? (
+                      parameterSummary.map((parameter) => (
+                        <Badge
+                          key={parameter}
+                          variant='outline'
+                          className='border-blue-500/80 text-blue-500'
+                        >
+                          {parameter}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className='text-muted-foreground text-xs'>
+                        {t('No parameters')}
+                      </span>
+                    )}
+                  </div>
+
+                  {info.description && (
+                    <p className='text-sm leading-relaxed'>{info.description}</p>
+                  )}
+
+                  {info.parameters.length > 0 && (
+                    <div className='space-y-2'>
+                      {info.parameters.map((parameter) => (
+                        <div
+                          key={parameter.name}
+                          className='grid gap-2 text-sm sm:grid-cols-[220px_minmax(0,1fr)]'
+                        >
+                          <div className='flex min-w-0 flex-wrap items-center gap-2'>
+                            <Badge
+                              variant='outline'
+                              className='border-blue-500/80 text-blue-500'
+                            >
+                              {parameter.name}
+                            </Badge>
+                            {parameter.type && (
+                              <Badge variant='secondary'>{parameter.type}</Badge>
+                            )}
+                            <Badge
+                              variant='outline'
+                              className={cn(
+                                parameter.required
+                                  ? 'border-orange-500 text-orange-500'
+                                  : 'text-muted-foreground'
+                              )}
+                            >
+                              {parameter.required ? t('Required') : t('Optional')}
+                            </Badge>
+                          </div>
+                          <p className='text-muted-foreground min-w-0 leading-relaxed'>
+                            {parameter.description || t('No parameter description')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className='rounded-md border bg-muted/30 p-3'>
+                    <p className='mb-2 text-xs font-medium text-foreground'>
+                      {t('Raw JSON')}
+                    </p>
+                    <DetailPre value={entry.content} />
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
@@ -992,18 +1233,18 @@ export function UsageLogDetailSheet({
             <ScrollArea className='w-full'>
               <TabsList className='w-max justify-start'>
                 <TabsTrigger value='overview'>{t('Overview')}</TabsTrigger>
-                <TabsTrigger value='raw'>{t('Raw')}</TabsTrigger>
                 <TabsTrigger value='messages'>{t('Messages')}</TabsTrigger>
                 <TabsTrigger value='tools'>{t('Tools')}</TabsTrigger>
                 <TabsTrigger value='metrics'>{t('Metrics')}</TabsTrigger>
                 <TabsTrigger value='stream'>{t('Stream')}</TabsTrigger>
+                <TabsTrigger value='raw'>{t('Raw')}</TabsTrigger>
               </TabsList>
               <ScrollBar orientation='horizontal' />
             </ScrollArea>
           </div>
 
           <ScrollArea className='min-h-0 flex-1'>
-            <div className='p-4 sm:p-6'>
+            <div className='flex min-h-full flex-col p-4 sm:p-6'>
               {!hasDetail ? (
                 <EmptyDetailState />
               ) : (
@@ -1012,18 +1253,7 @@ export function UsageLogDetailSheet({
                     <DetailGrid items={overviewItems} />
                   </TabsContent>
 
-                  <TabsContent value='raw' className='mt-0'>
-                    <PayloadPanels
-                      requestPayload={requestPayload}
-                      responsePayload={responsePayload}
-                      showRaw={showRaw}
-                      copiedKey={copiedKey}
-                      downloadPrefix={downloadPrefix}
-                      onCopy={handleCopy}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value='messages' className='mt-0'>
+                  <TabsContent value='messages' className='mt-0 min-h-0 flex-1'>
                     <MessagesPanel messages={messages} />
                   </TabsContent>
 
@@ -1037,6 +1267,17 @@ export function UsageLogDetailSheet({
 
                   <TabsContent value='stream' className='mt-0'>
                     <StreamPanel chunks={streamChunks} />
+                  </TabsContent>
+
+                  <TabsContent value='raw' className='mt-0'>
+                    <PayloadPanels
+                      requestPayload={requestPayload}
+                      responsePayload={responsePayload}
+                      showRaw={showRaw}
+                      copiedKey={copiedKey}
+                      downloadPrefix={downloadPrefix}
+                      onCopy={handleCopy}
+                    />
                   </TabsContent>
                 </>
               )}
