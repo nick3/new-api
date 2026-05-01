@@ -87,6 +87,59 @@ function stringifyValue(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
 
+function toFormattedString(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value !== 'string') return stringifyValue(value)
+
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+
+  try {
+    return JSON.stringify(JSON.parse(trimmed) as unknown, null, 2)
+  } catch {
+    return decodeEscapedText(trimmed)
+  }
+}
+
+function formatToolCallContent(value: JsonRecord): string {
+  const functionValue = isRecord(value.function) ? value.function : undefined
+  const deltaValue = isRecord(value.delta) ? value.delta : undefined
+  const name =
+    firstString(
+      value.name,
+      functionValue?.name,
+      value.tool_name,
+      value.function_name
+    ) || toolName(value)
+  const argsSource =
+    value.arguments ??
+    value.input ??
+    value.payload ??
+    functionValue?.arguments ??
+    value.parameters ??
+    value.input_json ??
+    deltaValue?.arguments ??
+    deltaValue?.partial_json ??
+    {}
+  const label = value.type === 'tool_use' ? 'tool_use' : 'function_call'
+  return [`[${label}] ${name}`, toFormattedString(argsSource)].filter(Boolean).join('\n')
+}
+
+function formatToolResultContent(value: JsonRecord): string {
+  const valueSource =
+    value.content ??
+    value.result ??
+    value.output ??
+    value.text ??
+    value.value ??
+    value.data ??
+    value.message ??
+    value.body ??
+    value
+  const name = firstString(value.name, value.tool_name, value.toolName) || toolName(value)
+  return [`[tool_result] ${name}`, toFormattedString(valueSource)].filter(Boolean).join('\n')
+}
+
 function contentText(value: unknown): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return decodeEscapedText(value)
@@ -94,14 +147,40 @@ function contentText(value: unknown): string {
 
   if (Array.isArray(value)) {
     return value
-      .map((item) => contentText(item))
+      .map((item) => contentText(item).trim())
       .filter(Boolean)
       .join('\n')
   }
 
   if (!isRecord(value)) return stringifyValue(value)
 
-  const type = stringValue(value.type)
+  const type = stringValue(value.type) || stringValue(value.kind)
+  if (
+    type === 'text' ||
+    type === 'input_text' ||
+    type === 'output_text' ||
+    type === 'summary_text'
+  ) {
+    return contentText(
+      value.text ?? value.value ?? value.data ?? value.text_output ?? value.output_text
+    )
+  }
+
+  if (type === 'tool_use' || type === 'function_call') {
+    return formatToolCallContent(value)
+  }
+
+  if (type === 'tool_result' || type === 'function_call_output' || value.role === 'tool') {
+    return formatToolResultContent(value)
+  }
+
+  if (type === 'reasoning' || type === 'thinking' || value.thinking) {
+    const reasoning = contentText(
+      value.text ?? value.reasoning ?? value.thinking ?? value.value ?? value.summary ?? value.content
+    )
+    return reasoning ? `[reasoning] ${reasoning}` : ''
+  }
+
   const directText = firstString(
     value.text,
     value.content,
@@ -110,7 +189,7 @@ function contentText(value: unknown): string {
     value.value,
     value.data
   )
-  if (directText) return type ? `[${type}] ${decodeEscapedText(directText)}` : decodeEscapedText(directText)
+  if (directText) return decodeEscapedText(directText)
 
   if (isRecord(value.message)) return contentText(value.message)
   if (isRecord(value.delta)) return contentText(value.delta)
@@ -505,89 +584,361 @@ function streamObjectsFromPayload(payload: ParsedPayload): unknown[] {
   return []
 }
 
+function mergeFunctionCallArguments(
+  item: unknown,
+  fallbackOutputIndex: number,
+  argumentsByKey: Map<string, string>
+): unknown {
+  if (!isRecord(item)) return item
+
+  const outputIndex = item.output_index ?? item.outputIndex ?? fallbackOutputIndex
+  const id = firstString(item.id, item.item_id, item.itemId, item.tool_call_id, item.toolCallId)
+  const keys = [id, `output_index:${outputIndex}`].filter(
+    (key): key is string => typeof key === 'string' && key.length > 0
+  )
+  const collected = keys
+    .map((key) => argumentsByKey.get(key))
+    .find((value) => typeof value === 'string' && value.length > 0)
+  if (!collected) return item
+
+  const functionValue = isRecord(item.function) ? item.function : undefined
+  const existing = firstString(
+    item.arguments,
+    item.input_json,
+    item.input,
+    functionValue?.arguments,
+    item.parameters
+  )
+  if (existing && existing.length >= collected.length) return item
+
+  if (functionValue) {
+    return {
+      ...item,
+      function: {
+        ...functionValue,
+        arguments: collected,
+      },
+    }
+  }
+
+  return { ...item, arguments: collected }
+}
+
+function getFunctionCallKeys(event: JsonRecord): string[] {
+  const id = firstString(event.item_id, event.itemId, event.id, event.tool_call_id, event.toolCallId)
+  const outputIndex = event.output_index ?? event.outputIndex ?? 0
+  return [id, `output_index:${outputIndex}`].filter(
+    (key): key is string => typeof key === 'string' && key.length > 0
+  )
+}
+
+function appendFunctionCallArguments(
+  argumentsByKey: Map<string, string>,
+  event: JsonRecord,
+  fragment: unknown
+) {
+  if (typeof fragment !== 'string') return
+  for (const key of getFunctionCallKeys(event)) {
+    argumentsByKey.set(key, `${argumentsByKey.get(key) || ''}${fragment}`)
+  }
+}
+
+function aggregateOpenAiStreamMessages(events: unknown[]): JsonRecord | null {
+  let role = 'assistant'
+  let content = ''
+  let reasoning = ''
+  const toolCalls = new Map<number, JsonRecord>()
+
+  for (const event of events) {
+    if (!isRecord(event) || !Array.isArray(event.choices)) continue
+    const choice = event.choices.find(isRecord)
+    if (!choice || !isRecord(choice.delta)) continue
+    const delta = choice.delta
+    role = stringValue(delta.role) || role
+    content += stringValue(delta.content) || ''
+    reasoning += stringValue(delta.reasoning_content) || ''
+
+    for (const [fallbackIndex, call] of asArray(delta.tool_calls).entries()) {
+      if (!isRecord(call)) continue
+      const index = typeof call.index === 'number' ? call.index : fallbackIndex
+      const existing = toolCalls.get(index) ?? {}
+      const existingFunction = isRecord(existing.function) ? existing.function : {}
+      const nextFunction = isRecord(call.function) ? call.function : {}
+      toolCalls.set(index, {
+        ...existing,
+        ...call,
+        function: {
+          ...existingFunction,
+          ...nextFunction,
+          arguments: `${stringValue(existingFunction.arguments) || ''}${stringValue(nextFunction.arguments) || ''}`,
+        },
+      })
+    }
+  }
+
+  const message: JsonRecord = { role }
+  if (content) message.content = content
+  if (reasoning.trim()) message.reasoning = reasoning
+  const calls = Array.from(toolCalls.values())
+  if (calls.length > 0) message.tool_calls = calls
+  return Object.keys(message).length > 1 ? message : null
+}
+
+function aggregateResponsesStreamMessages(events: unknown[]): JsonRecord | null {
+  const textByIndex = new Map<string, string>()
+  const outputItemsByIndex = new Map<unknown, JsonRecord>()
+  const argumentsByKey = new Map<string, string>()
+  let reasoning = ''
+  let latestResponse: JsonRecord | null = null
+
+  const appendIndexedText = (outputIndex: unknown, contentIndex: unknown, fragment: unknown) => {
+    const text = contentText(fragment)
+    if (!text) return
+    const key = `${outputIndex ?? 0}:${contentIndex ?? 0}`
+    textByIndex.set(key, `${textByIndex.get(key) || ''}${text}`)
+  }
+
+  const upsertOutputItem = (outputIndexRaw: unknown, item: unknown) => {
+    if (!isRecord(item)) return
+    const outputIndex = outputIndexRaw ?? item.output_index ?? item.outputIndex ?? item.output_item_index ?? item.outputItemIndex
+    const indexKey = outputIndex ?? outputItemsByIndex.size
+    const existing = outputItemsByIndex.get(indexKey)
+    outputItemsByIndex.set(indexKey, {
+      ...(existing ?? {}),
+      ...item,
+      ...(outputIndex !== undefined && outputIndex !== null ? { output_index: outputIndex } : {}),
+    })
+  }
+
+  for (const event of events) {
+    if (!isRecord(event)) continue
+    if (isRecord(event.response)) latestResponse = event.response
+
+    const type = stringValue(event.type)
+    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+      upsertOutputItem(
+        event.output_index ?? event.outputIndex ?? (isRecord(event.item) ? event.item.output_index ?? event.item.outputIndex : undefined),
+        event.item ?? event.output_item ?? event.outputItem ?? event.output
+      )
+      continue
+    }
+
+    if (type === 'response.function_call_arguments.delta' || type === 'response.tool_call_arguments.delta') {
+      appendFunctionCallArguments(argumentsByKey, event, event.delta ?? event.arguments_delta ?? event.argumentsDelta)
+      continue
+    }
+
+    if (type === 'response.function_call_arguments.done' || type === 'response.tool_call_arguments.done') {
+      for (const key of getFunctionCallKeys(event)) {
+        const full = stringValue(event.arguments) ?? stringValue(event.delta)
+        if (full !== undefined) argumentsByKey.set(key, full)
+      }
+      continue
+    }
+
+    if (type === 'response.output_text.delta') {
+      appendIndexedText(event.output_index, event.content_index, event.delta ?? event.text ?? event.output_text)
+      continue
+    }
+
+    if (type === 'response.output_text.done') {
+      appendIndexedText(event.output_index, event.content_index, event.text ?? event.output_text ?? event.delta)
+      continue
+    }
+
+    if (type?.includes('reasoning')) {
+      reasoning += contentText(event.delta ?? event.text ?? event.reasoning_text)
+    }
+  }
+
+  const mergedText = Array.from(textByIndex.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, value]) => value)
+    .join('')
+  const responseOutput = Array.isArray(latestResponse?.output) ? latestResponse.output : []
+  const outputFromResponse = responseOutput.length > 0
+  const outputFromEvents = Array.from(outputItemsByIndex.entries())
+    .sort((a, b) => {
+      const left = Number(a[0])
+      const right = Number(b[0])
+      const safeLeft = Number.isFinite(left) ? left : 0
+      const safeRight = Number.isFinite(right) ? right : 0
+      return safeLeft - safeRight
+    })
+    .map(([, value]) => value)
+  const baseOutput = outputFromResponse ? responseOutput : outputFromEvents
+  const patchedOutput = baseOutput.map((item, index) =>
+    mergeFunctionCallArguments(item, index, argumentsByKey)
+  )
+  const syntheticOutput =
+    patchedOutput.length > 0
+      ? []
+      : Array.from(argumentsByKey.entries())
+          .filter(([key, value]) => key.startsWith('output_index:') && value.trim())
+          .map(([key, value]) => ({
+            type: 'function_call',
+            output_index: Number(key.slice('output_index:'.length)),
+            name: 'function_call',
+            arguments: value,
+          }))
+  const output = patchedOutput.length > 0 ? patchedOutput : syntheticOutput
+
+  if (output.length > 0) {
+    return {
+      role: stringValue(latestResponse?.role) || 'assistant',
+      output,
+      ...(!outputFromResponse && mergedText.trim() ? { content: mergedText } : {}),
+      ...(reasoning.trim() ? { reasoning } : {}),
+    }
+  }
+
+  const fallbackText = contentText(
+    latestResponse?.output_text ?? latestResponse?.outputText ?? latestResponse?.text ?? latestResponse?.content ?? latestResponse?.output_texts
+  )
+  if (fallbackText.trim()) {
+    return {
+      role: stringValue(latestResponse?.role) || 'assistant',
+      content: fallbackText,
+      ...(reasoning.trim() ? { reasoning } : {}),
+    }
+  }
+
+  if (!mergedText.trim() && !reasoning.trim()) return null
+  return {
+    role: 'assistant',
+    ...(mergedText.trim() ? { content: mergedText } : {}),
+    ...(reasoning.trim() ? { reasoning } : {}),
+  }
+}
+
+interface ClaudeStreamBlock extends JsonRecord {
+  partialJson: string
+  reasoning: string
+  text: string
+  input?: unknown
+  content?: unknown
+  id?: unknown
+  name?: unknown
+}
+
+function aggregateClaudeStreamMessages(events: unknown[]): JsonRecord | null {
+  const blocks = new Map<number, ClaudeStreamBlock>()
+  let role = 'assistant'
+  let reasoning = ''
+
+  const getBlock = (index: number): ClaudeStreamBlock => {
+    const existing = blocks.get(index)
+    if (existing) return existing
+    const block: ClaudeStreamBlock = {
+      type: 'text',
+      text: '',
+      partialJson: '',
+      reasoning: '',
+    }
+    blocks.set(index, block)
+    return block
+  }
+
+  for (const event of events) {
+    if (!isRecord(event)) continue
+    const type = stringValue(event.type)
+
+    if (type === 'message_start' && isRecord(event.message)) {
+      role = stringValue(event.message.role) || role
+      continue
+    }
+
+    if (type === 'content_block_start' && isRecord(event.content_block)) {
+      const index = typeof event.index === 'number' ? event.index : blocks.size
+      const block = getBlock(index)
+      Object.assign(block, {
+        type: event.content_block.type ?? block.type,
+        text: stringValue(event.content_block.text) || '',
+        name: event.content_block.name,
+        id: event.content_block.id,
+        input: event.content_block.input,
+        content: event.content_block.content,
+        reasoning: stringValue(event.content_block.thinking) || '',
+      })
+      continue
+    }
+
+    if (type === 'content_block_delta' && isRecord(event.delta)) {
+      const index = typeof event.index === 'number' ? event.index : 0
+      const block = getBlock(index)
+      const deltaType = stringValue(event.delta.type)
+      if (deltaType === 'text_delta' || event.delta.text) {
+        block.text = `${block.text || ''}${stringValue(event.delta.text) || ''}`
+      } else if (deltaType === 'thinking_delta') {
+        block.reasoning = `${block.reasoning || ''}${stringValue(event.delta.thinking) || ''}`
+      } else if (deltaType === 'input_json_delta' || deltaType === 'tool_use_delta') {
+        block.partialJson = `${block.partialJson || ''}${stringValue(event.delta.partial_json) || stringValue(event.delta.partialJson) || stringValue(event.delta.arguments) || ''}`
+      }
+      continue
+    }
+
+    if (type === 'content_block_stop') {
+      const index = typeof event.index === 'number' ? event.index : 0
+      const block = getBlock(index)
+      if (block.partialJson?.trim()) {
+        try {
+          block.input = JSON.parse(block.partialJson) as unknown
+        } catch {
+          block.input = block.partialJson
+        }
+      }
+      continue
+    }
+
+    if (type === 'message_delta' && isRecord(event.delta)) {
+      role = stringValue(event.delta.role) || role
+      reasoning += contentText(event.delta.reasoning)
+    }
+  }
+
+  const content = Array.from(blocks.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([, block]) => {
+      if (block.reasoning) reasoning += block.reasoning
+      if (block.type === 'tool_use') {
+        return {
+          type: 'tool_use',
+          id: block.id,
+          name: block.name,
+          input: block.input ?? (block.partialJson?.trim() ? block.partialJson : undefined),
+        }
+      }
+      if (block.type === 'tool_result') {
+        return {
+          type: 'tool_result',
+          id: block.id,
+          name: block.name,
+          content: block.content ?? block.text ?? block.input,
+        }
+      }
+      return { type: block.type || 'text', text: block.text || '', content: block.content }
+    })
+    .filter((item) => contentText(item).trim())
+
+  if (content.length === 0 && !reasoning.trim()) return null
+  return {
+    role,
+    ...(content.length > 0 ? { content } : {}),
+    ...(reasoning.trim() ? { reasoning } : {}),
+  }
+}
+
 function appendStreamMessages(messages: DetailMessage[], payload: ParsedPayload) {
   const events = streamObjectsFromPayload(payload)
   if (events.length === 0) return
 
-  if (events.some((event) => isRecord(event) && Array.isArray(event.choices))) {
-    let role = 'assistant'
-    let content = ''
-    let reasoning = ''
-    const toolCalls = new Map<number, JsonRecord>()
+  const aggregated = events.some((event) => isRecord(event) && Array.isArray(event.choices))
+    ? aggregateOpenAiStreamMessages(events)
+    : events.some((event) => isRecord(event) && stringValue(event.type)?.startsWith('response.'))
+      ? aggregateResponsesStreamMessages(events)
+      : aggregateClaudeStreamMessages(events)
 
-    for (const event of events) {
-      if (!isRecord(event) || !Array.isArray(event.choices)) continue
-      const choice = event.choices.find(isRecord)
-      if (!choice || !isRecord(choice.delta)) continue
-      const delta = choice.delta
-      role = stringValue(delta.role) || role
-      content += stringValue(delta.content) || ''
-      reasoning += stringValue(delta.reasoning_content) || ''
-
-      for (const [fallbackIndex, call] of asArray(delta.tool_calls).entries()) {
-        if (!isRecord(call)) continue
-        const index = typeof call.index === 'number' ? call.index : fallbackIndex
-        const existing = toolCalls.get(index) ?? {}
-        const existingFunction = isRecord(existing.function) ? existing.function : {}
-        const nextFunction = isRecord(call.function) ? call.function : {}
-        toolCalls.set(index, {
-          ...existing,
-          ...call,
-          function: {
-            ...existingFunction,
-            ...nextFunction,
-            arguments: `${stringValue(existingFunction.arguments) || ''}${stringValue(nextFunction.arguments) || ''}`,
-          },
-        })
-      }
-    }
-
-    const parts = [reasoning && `[reasoning] ${reasoning}`, content]
-      .filter(Boolean)
-      .join('\n')
-    const calls = Array.from(toolCalls.values())
-    const messageContent = calls.length > 0 ? [parts, stringifyValue(calls)].filter(Boolean).join('\n') : parts
-    pushMessage(messages, 'response', role, messageContent)
-    return
-  }
-
-  let role = 'assistant'
-  let content = ''
-  let reasoning = ''
-  const outputItems: unknown[] = []
-
-  for (const event of events) {
-    if (!isRecord(event)) continue
-    role = stringValue(event.role) || (isRecord(event.message) ? stringValue(event.message.role) : undefined) || role
-
-    const type = stringValue(event.type)
-    if (type === 'content_block_start' && isRecord(event.content_block)) {
-      outputItems.push(event.content_block)
-      continue
-    }
-    if (type === 'content_block_delta' && isRecord(event.delta)) {
-      content += stringValue(event.delta.text) || stringValue(event.delta.thinking) || stringValue(event.delta.partial_json) || ''
-      continue
-    }
-    if (type === 'response.output_text.delta' || type === 'response.output_text.done') {
-      content += stringValue(event.delta) || stringValue(event.text) || stringValue(event.output_text) || ''
-      continue
-    }
-    if (type?.includes('reasoning')) {
-      reasoning += stringValue(event.delta) || stringValue(event.text) || stringValue(event.reasoning_text) || ''
-    }
-    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
-      outputItems.push(event.item ?? event.output_item ?? event.outputItem ?? event.output)
-    }
-    if (isRecord(event.response)) {
-      appendMessagesFromPayload(messages, 'response', event.response)
-    }
-  }
-
-  const parts = [reasoning && `[reasoning] ${reasoning}`, content, outputItems.length > 0 && contentText(outputItems)]
-    .filter(Boolean)
-    .join('\n')
-  pushMessage(messages, 'response', role, parts)
+  if (aggregated) pushMessageFromRecord(messages, 'response', aggregated, 'assistant')
 }
 
 function describeStreamEvent(value: unknown): {
@@ -712,23 +1063,116 @@ export function extractDetailTools(
   return entries
 }
 
+function parseJsonCandidate(value: string): unknown | null {
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return null
+  }
+}
+
+function splitConcatenatedJsonObjects(value: string): unknown[] {
+  const objects: unknown[] = []
+  let buffer = ''
+  let depth = 0
+  let inString = false
+  let escapeNext = false
+
+  for (const char of value) {
+    buffer += char
+
+    if (escapeNext) {
+      escapeNext = false
+      continue
+    }
+
+    if (char === '\\') {
+      escapeNext = true
+      continue
+    }
+
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+
+    if (inString) continue
+
+    if (char === '{') depth += 1
+    if (char === '}') depth -= 1
+
+    if (depth === 0 && buffer.trim()) {
+      const parsed = parseJsonCandidate(buffer.trim())
+      if (parsed) objects.push(parsed)
+      buffer = ''
+    }
+  }
+
+  return objects
+}
+
 export function splitSSE(raw: string | null | undefined): unknown[] {
   if (!raw) return []
 
-  return raw
-    .split(/\n\n|\r\n\r\n/)
-    .flatMap((block) => block.split(/\r?\n/))
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trim())
-    .filter((data) => data && data !== '[DONE]')
-    .map((data) => {
-      try {
-        return JSON.parse(data) as unknown
-      } catch {
-        return data
+  const trimmed = raw.trim()
+  if (!trimmed) return []
+
+  const objects: unknown[] = []
+  const pushCandidate = (candidate: string) => {
+    const data = candidate.trim()
+    if (!data || data === '[DONE]') return
+    const parsed = parseJsonCandidate(data)
+    if (parsed) objects.push(parsed)
+  }
+
+  for (const block of trimmed.split(/\r?\n\r?\n/)) {
+    const candidate = block
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trim())
+      .join('')
+    pushCandidate(candidate)
+  }
+
+  if (objects.length > 0) return objects
+
+  let dataBuffer = ''
+  const flushBuffer = () => {
+    pushCandidate(dataBuffer)
+    dataBuffer = ''
+  }
+
+  for (const line of trimmed.split(/\r?\n/)) {
+    const current = line.trim()
+    if (!current) {
+      flushBuffer()
+      continue
+    }
+    if (!current.startsWith('data:')) continue
+
+    const payload = current.slice(5).trim()
+    if (!payload) continue
+    if (!dataBuffer) {
+      const parsed = parseJsonCandidate(payload)
+      if (parsed) {
+        objects.push(parsed)
+        continue
       }
-    })
+    }
+
+    dataBuffer += payload
+    const parsed = parseJsonCandidate(dataBuffer)
+    if (parsed) {
+      objects.push(parsed)
+      dataBuffer = ''
+    }
+  }
+  flushBuffer()
+
+  if (objects.length > 0) return objects
+
+  return splitConcatenatedJsonObjects(trimmed)
 }
 
 export function extractStreamChunks(payload: ParsedPayload): DetailStreamChunk[] {

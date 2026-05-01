@@ -398,9 +398,11 @@ function MessageListSection({
   if (messages.length === 0) return null
 
   return (
-    <section className='space-y-1.5'>
-      <div className='flex items-center justify-between gap-2 px-4 py-2.5'>
-        <h3 className='text-muted-foreground text-sm font-medium'>{title}</h3>
+    <section className='min-w-0 space-y-1.5 overflow-hidden'>
+      <div className='flex min-w-0 items-center justify-between gap-2 px-4 py-2.5'>
+        <h3 className='text-muted-foreground min-w-0 truncate text-sm font-medium'>
+          {title}
+        </h3>
         <Badge
           variant='secondary'
           className='h-6 min-w-7 rounded-full border-0 px-2 text-xs'
@@ -408,7 +410,7 @@ function MessageListSection({
           {messages.length}
         </Badge>
       </div>
-      <div className='space-y-0.5'>
+      <div className='min-w-0 space-y-0.5 overflow-hidden'>
         {messages.map((message) => {
           const roleStyle = getMessageRoleStyle(message.role)
           const selected = message.id === currentMessageId
@@ -419,7 +421,7 @@ function MessageListSection({
               type='button'
               aria-pressed={selected}
               className={cn(
-                'focus-visible:ring-ring w-full rounded-lg px-4 py-1.5 text-left transition-colors ring-1 ring-transparent focus-visible:ring-2 focus-visible:outline-none',
+                'focus-visible:ring-ring block w-full max-w-full min-w-0 overflow-hidden rounded-lg px-4 py-1.5 text-left transition-colors ring-1 ring-transparent focus-visible:ring-2 focus-visible:outline-none',
                 selected
                   ? roleStyle.active
                   : 'hover:bg-background/80'
@@ -427,13 +429,16 @@ function MessageListSection({
               onClick={() => onSelect(message)}
             >
               <span
-                className={cn('block truncate text-sm font-medium', roleStyle.text)}
+                className={cn(
+                  'block max-w-full min-w-0 truncate text-sm font-medium',
+                  roleStyle.text
+                )}
               >
                 {message.name
                   ? `${formatRoleName(message.role)} · ${message.name}`
                   : formatRoleName(message.role)}
               </span>
-              <span className='text-muted-foreground mt-0.5 block truncate text-xs leading-4'>
+              <span className='text-muted-foreground mt-0.5 block max-w-full min-w-0 truncate text-xs leading-4'>
                 {getMessagePreview(message)}
               </span>
             </button>
@@ -492,9 +497,9 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
 
   return (
     <div className='grid min-h-[520px] overflow-hidden rounded-xl border bg-background lg:grid-cols-[220px_minmax(0,1fr)]'>
-      <aside className='bg-muted/35 border-b p-2 lg:border-r lg:border-b-0'>
-        <ScrollArea className='max-h-[280px] pr-1 lg:h-[560px] lg:max-h-none'>
-          <div className='space-y-6 pb-2'>
+      <aside className='bg-muted/35 min-w-0 overflow-hidden border-b p-2 lg:border-r lg:border-b-0'>
+        <ScrollArea className='max-h-[280px] min-w-0 pr-1 lg:h-[560px] lg:max-h-none'>
+          <div className='min-w-0 space-y-6 overflow-hidden pb-2'>
             <MessageListSection
               title={t('Request')}
               messages={requestMessages}

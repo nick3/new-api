@@ -130,6 +130,118 @@ describe('usage log detail parsing', () => {
     expect(messages.map((item) => item.content)).toEqual(['Hi', 'Hello'])
   })
 
+  test('aggregates Responses API function call argument stream events', () => {
+    const request = parsePayload(JSON.stringify({ input: 'Search' }))
+    const response = parsePayload(
+      JSON.stringify({
+        events: [
+          {
+            type: 'response.output_item.added',
+            output_index: 0,
+            item: { id: 'fc_1', type: 'function_call', name: 'lookup' },
+          },
+          {
+            type: 'response.function_call_arguments.delta',
+            item_id: 'fc_1',
+            output_index: 0,
+            delta: '{"q"',
+          },
+          {
+            type: 'response.function_call_arguments.delta',
+            item_id: 'fc_1',
+            output_index: 0,
+            delta: ':"x"}',
+          },
+        ],
+      })
+    )
+
+    const messages = extractDetailMessages(request, response)
+    expect(messages.at(-1).content).toContain('[function_call] lookup')
+    expect(messages.at(-1).content).toContain('"q": "x"')
+  })
+
+  test('uses Responses API function call argument done event as full value', () => {
+    const request = parsePayload(JSON.stringify({ input: 'Search' }))
+    const response = parsePayload(
+      JSON.stringify({
+        events: [
+          {
+            type: 'response.output_item.added',
+            output_index: 0,
+            item: { id: 'fc_1', type: 'function_call', name: 'lookup' },
+          },
+          {
+            type: 'response.function_call_arguments.delta',
+            item_id: 'fc_1',
+            output_index: 0,
+            delta: '{"partial":true}',
+          },
+          {
+            type: 'response.function_call_arguments.done',
+            item_id: 'fc_1',
+            output_index: 0,
+            arguments: '{"q":"final"}',
+          },
+        ],
+      })
+    )
+
+    const messages = extractDetailMessages(request, response)
+    expect(messages.at(-1).content).toContain('"q": "final"')
+    expect(messages.at(-1).content).not.toContain('partial')
+  })
+
+  test('aggregates Claude tool use JSON stream events', () => {
+    const request = parsePayload(JSON.stringify({ messages: [] }))
+    const response = parsePayload(
+      JSON.stringify([
+        { type: 'message_start', message: { role: 'assistant' } },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'toolu_1', name: 'lookup' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'input_json_delta', partial_json: '{"q"' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'input_json_delta', partial_json: ':"x"}' },
+        },
+        { type: 'content_block_stop', index: 0 },
+      ])
+    )
+
+    const messages = extractDetailMessages(request, response)
+    expect(messages.at(-1).content).toContain('[tool_use] lookup')
+    expect(messages.at(-1).content).toContain('"q": "x"')
+  })
+
+  test('parses SSE chunks without blank line separators', () => {
+    const response = parsePayload(
+      'data: {"choices":[{"delta":{"role":"assistant","content":"Hel"}}]}\n' +
+        'data: {"choices":[{"delta":{"content":"lo"}}]}\n' +
+        'data: [DONE]\n'
+    )
+
+    const messages = extractDetailMessages(parsePayload('{}'), response)
+    expect(messages.map((item) => item.content)).toEqual(['Hello'])
+  })
+
+  test('parses concatenated JSON stream objects', () => {
+    const response = parsePayload(
+      '{"choices":[{"delta":{"role":"assistant","content":"Hel"}}]}' +
+        '{"choices":[{"delta":{"content":"lo"}}]}'
+    )
+
+    const messages = extractDetailMessages(parsePayload('{}'), response)
+    expect(messages.map((item) => item.content)).toEqual(['Hello'])
+  })
+
   test('does not parse stream chunks from truncated payloads', () => {
     const payload = parsePayload(
       'data: {"choices":[{"delta":{"content":"x"}}]}',
