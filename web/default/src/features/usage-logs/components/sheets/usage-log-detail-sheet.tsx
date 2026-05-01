@@ -172,10 +172,10 @@ function PayloadPanel({
   }
 
   return (
-    <section className='bg-card/60 flex min-h-0 flex-col rounded-lg border'>
-      <div className='space-y-3 border-b p-3'>
-        <div className='flex items-center justify-between gap-2'>
-          <div>
+    <section className='bg-card/60 flex min-h-0 min-w-0 max-w-full flex-col overflow-hidden rounded-lg border'>
+      <div className='min-w-0 space-y-3 border-b p-3'>
+        <div className='flex min-w-0 items-center justify-between gap-2'>
+          <div className='min-w-0'>
             <h3 className='text-sm font-semibold'>{title}</h3>
             {payload.isTruncated && (
               <p className='text-muted-foreground mt-1 text-xs'>
@@ -253,7 +253,7 @@ function PayloadPanels({
   const { t } = useTranslation()
 
   return (
-    <div className='grid min-h-0 gap-4'>
+    <div className='grid min-h-0 min-w-0 max-w-full gap-4 overflow-hidden'>
       <PayloadPanel
         title={t('Request Body')}
         payload={requestPayload}
