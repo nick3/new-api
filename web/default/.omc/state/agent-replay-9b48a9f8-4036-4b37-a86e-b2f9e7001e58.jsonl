@@ -1,0 +1,4 @@
+{"t":0,"agent":"acbbcb8","agent_type":"pr-review-toolkit:code-reviewer","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"acbbcb8","agent_type":"pr-review-toolkit:code-reviewer","event":"agent_stop","success":true,"duration_ms":124846}
+{"t":0,"agent":"a3fbd5f","agent_type":"pr-review-toolkit:code-reviewer","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a3fbd5f","agent_type":"pr-review-toolkit:code-reviewer","event":"agent_stop","success":true,"duration_ms":844327}
