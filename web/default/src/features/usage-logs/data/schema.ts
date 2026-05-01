@@ -4,6 +4,13 @@
  */
 import { z } from 'zod'
 
+export const usageLogDetailSchema = z.object({
+  log_id: z.number(),
+  request_body: z.string().nullish().default(''),
+  response_body: z.string().nullish().default(''),
+  created_at: z.number().optional(),
+})
+
 // Usage log schema
 export const usageLogSchema = z.object({
   id: z.number(),
@@ -26,6 +33,8 @@ export const usageLogSchema = z.object({
   ip: z.string().default(''),
   other: z.string().default(''),
   request_id: z.string().default(''),
+  detail: usageLogDetailSchema.nullish(),
 })
 
+export type UsageLogDetail = z.infer<typeof usageLogDetailSchema>
 export type UsageLog = z.infer<typeof usageLogSchema>

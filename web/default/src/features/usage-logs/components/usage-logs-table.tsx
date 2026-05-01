@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
@@ -34,11 +34,13 @@ import {
 } from '@/components/data-table'
 import { PageFooterPortal } from '@/components/layout'
 import { DEFAULT_LOGS_DATA, LOG_TYPE_ENUM } from '../constants'
+import type { UsageLog } from '../data/schema'
 import { useColumnsByCategory } from '../lib/columns'
 import { fetchLogsByCategory } from '../lib/utils'
 import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { CommonLogsStats } from './common-logs-stats'
+import { UsageLogDetailSheet } from './sheets/usage-log-detail-sheet'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -57,6 +59,10 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const isAdmin = useIsAdmin()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const [selectedLogDetail, setSelectedLogDetail] = useState<UsageLog | null>(
+    null
+  )
+  const [detailSheetOpen, setDetailSheetOpen] = useState(false)
 
   const {
     columnFilters,
@@ -128,7 +134,12 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const logs = data?.items || []
-  const columns = useColumnsByCategory(logCategory, isAdmin)
+  const columns = useColumnsByCategory(logCategory, isAdmin, {
+    onOpenDetail: (log) => {
+      setSelectedLogDetail(log)
+      setDetailSheetOpen(true)
+    },
+  })
   const isLoadingData = isLoading || (isFetching && !data)
 
   const table = useReactTable({
@@ -169,10 +180,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         isCommon && logType != null ? (logTypeRowTint[logType] ?? '') : ''
 
       return (
-        <TableRow
-          key={row.id}
-          className={cn('transition-colors', tintClass)}
-        >
+        <TableRow key={row.id} className={cn('transition-colors', tintClass)}>
           {row.getVisibleCells().map((cell) => (
             <TableCell key={cell.id} className={isCommon ? 'py-2' : 'py-3.5'}>
               {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -187,14 +195,14 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     <>
       <div className='space-y-3 sm:space-y-4'>
         {logCategory === 'common' ? (
-          <div className='rounded-md border bg-card/50 p-2 shadow-xs sm:p-3'>
+          <div className='bg-card/50 rounded-md border p-2 shadow-xs sm:p-3'>
             <CommonLogsFilterBar
               stats={<CommonLogsStats />}
               viewOptions={<DataTableViewOptions table={table} />}
             />
           </div>
         ) : (
-          <div className='rounded-md border bg-card/50 p-2 shadow-xs sm:p-3'>
+          <div className='bg-card/50 rounded-md border p-2 shadow-xs sm:p-3'>
             <TaskLogsFilterBar
               logCategory={logCategory}
               viewOptions={<DataTableViewOptions table={table} />}
@@ -253,6 +261,14 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
           </div>
         )}
       </div>
+      {isCommon && (
+        <UsageLogDetailSheet
+          log={selectedLogDetail}
+          open={detailSheetOpen}
+          isAdmin={isAdmin}
+          onOpenChange={setDetailSheetOpen}
+        />
+      )}
       <PageFooterPortal>
         <DataTablePagination table={table} />
       </PageFooterPortal>
