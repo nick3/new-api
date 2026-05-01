@@ -628,7 +628,7 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
   }
 
   return (
-    <div className='grid h-full min-h-[520px] overflow-hidden rounded-xl border bg-background lg:grid-cols-[220px_minmax(0,1fr)]'>
+    <div className='grid h-full min-h-0 overflow-hidden rounded-xl border bg-background lg:grid-cols-[220px_minmax(0,1fr)]'>
       <aside className='bg-muted/35 min-h-0 min-w-0 overflow-hidden border-b p-2 lg:border-r lg:border-b-0'>
         <div className='h-full max-h-[280px] w-full min-w-0 overflow-y-auto overflow-x-hidden pr-1 lg:max-h-none'>
           <div className='w-full min-w-0 space-y-6 overflow-hidden pb-2'>
@@ -1213,33 +1213,43 @@ export function UsageLogDetailSheet({
             </ScrollArea>
           </div>
 
-          <ScrollArea className='min-h-0 flex-1'>
-            <div className='flex min-h-full flex-col p-4 sm:p-6'>
-              {!hasDetail ? (
+          <div className='min-h-0 flex-1 overflow-hidden p-4 sm:p-6'>
+            {!hasDetail ? (
+              <ScrollArea className='h-full'>
                 <EmptyDetailState />
-              ) : (
-                <>
-                  <TabsContent value='overview' className='mt-0 space-y-4'>
+              </ScrollArea>
+            ) : (
+              <>
+                <TabsContent value='overview' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
                     <DetailGrid items={overviewItems} />
-                  </TabsContent>
+                  </ScrollArea>
+                </TabsContent>
 
-                  <TabsContent value='messages' className='mt-0 min-h-0 flex-1'>
-                    <MessagesPanel messages={messages} />
-                  </TabsContent>
+                <TabsContent value='messages' className='mt-0 h-full min-h-0'>
+                  <MessagesPanel messages={messages} />
+                </TabsContent>
 
-                  <TabsContent value='tools' className='mt-0'>
+                <TabsContent value='tools' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
                     <ToolsPanel entries={tools} />
-                  </TabsContent>
+                  </ScrollArea>
+                </TabsContent>
 
-                  <TabsContent value='metrics' className='mt-0'>
+                <TabsContent value='metrics' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
                     <MetricsPanel items={metricItems} />
-                  </TabsContent>
+                  </ScrollArea>
+                </TabsContent>
 
-                  <TabsContent value='stream' className='mt-0'>
+                <TabsContent value='stream' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
                     <StreamPanel chunks={streamChunks} />
-                  </TabsContent>
+                  </ScrollArea>
+                </TabsContent>
 
-                  <TabsContent value='raw' className='mt-0'>
+                <TabsContent value='raw' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
                     <PayloadPanels
                       requestPayload={requestPayload}
                       responsePayload={responsePayload}
@@ -1248,11 +1258,11 @@ export function UsageLogDetailSheet({
                       downloadPrefix={downloadPrefix}
                       onCopy={handleCopy}
                     />
-                  </TabsContent>
-                </>
-              )}
-            </div>
-          </ScrollArea>
+                  </ScrollArea>
+                </TabsContent>
+              </>
+            )}
+          </div>
         </Tabs>
       </SheetContent>
     </Sheet>
