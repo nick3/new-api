@@ -617,7 +617,7 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
   }
 
   const handleCopySelected = () => {
-    void copyToClipboard(currentMessageJson)
+    void copyToClipboard(selectedContent)
   }
 
   return (
@@ -693,7 +693,7 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
               className='h-10 rounded-full px-4 text-sm text-sky-600 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200'
               onClick={handleCopySelected}
             >
-              {copiedText === currentMessageJson ? (
+              {copiedText === selectedContent ? (
                 <Check className='size-3.5' />
               ) : (
                 <Copy className='size-3.5' />

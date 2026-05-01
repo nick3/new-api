@@ -3,47 +3,40 @@
  */
 function fallbackCopyToClipboard(text: string): boolean {
   const textArea = document.createElement('textarea')
-  textArea.value = text
+  const activeElement = document.activeElement
+  const container =
+    activeElement instanceof HTMLElement
+      ? (activeElement.closest('[role="dialog"]') ?? document.body)
+      : document.body
 
-  // Make the textarea out of viewport
+  textArea.value = text
   textArea.style.position = 'fixed'
   textArea.style.left = '-999999px'
   textArea.style.top = '-999999px'
   textArea.style.opacity = '0'
   textArea.setAttribute('readonly', '')
 
-  document.body.appendChild(textArea)
+  container.appendChild(textArea)
 
   try {
-    // Select the text
     textArea.focus()
     textArea.select()
 
-    // For iOS devices
     const range = document.createRange()
     range.selectNodeContents(textArea)
     const selection = window.getSelection()
-    if (selection) {
-      selection.removeAllRanges()
-      selection.addRange(range)
-    }
+    selection?.removeAllRanges()
+    selection?.addRange(range)
     textArea.setSelectionRange(0, text.length)
 
-    // Execute copy command
-    const successful = document.execCommand('copy')
-    document.body.removeChild(textArea)
-    // Clear selection ranges for better UX
-    const selectionAfter = window.getSelection()
-    if (selectionAfter) {
-      selectionAfter.removeAllRanges()
-    }
-
-    return successful
+    return document.execCommand('copy')
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('Fallback copy failed:', err)
-    document.body.removeChild(textArea)
     return false
+  } finally {
+    container.removeChild(textArea)
+    window.getSelection()?.removeAllRanges()
   }
 }
 
