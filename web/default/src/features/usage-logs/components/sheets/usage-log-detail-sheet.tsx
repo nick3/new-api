@@ -6,9 +6,11 @@ import {
   formatTimestampToDate,
   formatUseTime,
 } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
   Empty,
@@ -52,6 +54,7 @@ interface UsageLogDetailSheetProps {
 
 type DetailTab = 'overview' | 'raw' | 'messages' | 'tools' | 'metrics' | 'stream'
 type CopiedKey = 'request' | 'response' | 'all' | null
+type MessageViewMode = 'pretty' | 'json'
 
 interface DetailItem {
   label: string
@@ -313,10 +316,168 @@ function DetailPre({ value }: { value: string }) {
   )
 }
 
+const messageRoleStyles: Record<
+  string,
+  { text: string; badge: string; active: string }
+> = {
+  assistant: {
+    text: 'text-[#02a999]',
+    badge: 'border-transparent bg-[#02a999] text-white',
+    active: 'bg-[#02a999]/10 ring-[#02a999]/20',
+  },
+  developer: {
+    text: 'text-[#0f6cbd]',
+    badge: 'border-transparent bg-[#0f6cbd] text-white',
+    active: 'bg-[#0f6cbd]/10 ring-[#0f6cbd]/20',
+  },
+  system: {
+    text: 'text-violet-600 dark:text-violet-300',
+    badge: 'border-transparent bg-violet-500 text-white',
+    active: 'bg-violet-500/10 ring-violet-500/20',
+  },
+  tool: {
+    text: 'text-[#13a10e]',
+    badge: 'border-transparent bg-[#13a10e] text-white',
+    active: 'bg-[#13a10e]/10 ring-[#13a10e]/20',
+  },
+  user: {
+    text: 'text-[#eaa300]',
+    badge: 'border-transparent bg-[#f5a524] text-zinc-950',
+    active: 'bg-[#eaa300]/15 ring-[#eaa300]/25',
+  },
+}
+
+const defaultMessageRoleStyle = {
+  text: 'text-foreground',
+  badge: 'border-transparent bg-muted text-foreground',
+  active: 'bg-muted ring-border',
+}
+
+function formatRoleName(role: string): string {
+  const normalized = role.replace(/[_-]+/g, ' ').trim()
+  if (!normalized) return 'Message'
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function getMessageRoleStyle(role: string) {
+  const normalizedRole = role.toLowerCase().replace(/[_-].*$/, '')
+  return messageRoleStyles[normalizedRole] ?? defaultMessageRoleStyle
+}
+
+function getMessagePreview(message: DetailMessage): string {
+  const preview = message.content.replace(/\s+/g, ' ').trim()
+  if (!preview) return '-'
+  return preview.length > 72 ? `${preview.slice(0, 72)}...` : preview
+}
+
+function stringifyMessage(message: DetailMessage): string {
+  return JSON.stringify(
+    {
+      id: message.id,
+      source: message.source,
+      role: message.role,
+      ...(message.name ? { name: message.name } : {}),
+      content: message.content,
+    },
+    null,
+    2
+  )
+}
+
+function MessageListSection({
+  title,
+  messages,
+  currentMessageId,
+  onSelect,
+}: {
+  title: string
+  messages: DetailMessage[]
+  currentMessageId: string
+  onSelect: (message: DetailMessage) => void
+}) {
+  if (messages.length === 0) return null
+
+  return (
+    <section className='space-y-1.5'>
+      <div className='flex items-center justify-between gap-2 px-4 py-2.5'>
+        <h3 className='text-muted-foreground text-sm font-medium'>{title}</h3>
+        <Badge
+          variant='secondary'
+          className='h-6 min-w-7 rounded-full border-0 px-2 text-xs'
+        >
+          {messages.length}
+        </Badge>
+      </div>
+      <div className='space-y-0.5'>
+        {messages.map((message) => {
+          const roleStyle = getMessageRoleStyle(message.role)
+          const selected = message.id === currentMessageId
+
+          return (
+            <button
+              key={message.id}
+              type='button'
+              aria-pressed={selected}
+              className={cn(
+                'focus-visible:ring-ring w-full rounded-lg px-4 py-1.5 text-left transition-colors ring-1 ring-transparent focus-visible:ring-2 focus-visible:outline-none',
+                selected
+                  ? roleStyle.active
+                  : 'hover:bg-background/80'
+              )}
+              onClick={() => onSelect(message)}
+            >
+              <span
+                className={cn('block truncate text-sm font-medium', roleStyle.text)}
+              >
+                {message.name
+                  ? `${formatRoleName(message.role)} · ${message.name}`
+                  : formatRoleName(message.role)}
+              </span>
+              <span className='text-muted-foreground mt-0.5 block truncate text-xs leading-4'>
+                {getMessagePreview(message)}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
   const { t } = useTranslation()
+  const [selectedMessage, setSelectedMessage] = useState<DetailMessage | null>(
+    null
+  )
+  const [viewMode, setViewMode] = useState<MessageViewMode>('pretty')
+  const { copiedText, copyToClipboard } = useCopyToClipboard()
 
-  if (messages.length === 0) {
+  const currentMessage = useMemo(
+    () =>
+      (selectedMessage && messages.includes(selectedMessage)
+        ? selectedMessage
+        : messages[0]) ?? null,
+    [messages, selectedMessage]
+  )
+  const requestMessages = useMemo(
+    () => messages.filter((message) => message.source === 'request'),
+    [messages]
+  )
+  const responseMessages = useMemo(
+    () => messages.filter((message) => message.source === 'response'),
+    [messages]
+  )
+  const selectedRoleStyle = currentMessage
+    ? getMessageRoleStyle(currentMessage.role)
+    : defaultMessageRoleStyle
+  const currentMessageJson = useMemo(
+    () => (currentMessage ? stringifyMessage(currentMessage) : ''),
+    [currentMessage]
+  )
+  const selectedContent =
+    viewMode === 'json' ? currentMessageJson : (currentMessage?.content ?? '')
+
+  if (messages.length === 0 || !currentMessage) {
     return (
       <EmptyTabState
         title={t('No parsed messages')}
@@ -325,17 +486,121 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
     )
   }
 
+  const handleCopySelected = () => {
+    void copyToClipboard(currentMessageJson)
+  }
+
   return (
-    <div className='space-y-3'>
-      {messages.map((message) => (
-        <SectionCard
-          key={message.id}
-          title={message.name ? `${message.role} · ${message.name}` : message.role}
-          badge={t(message.source === 'request' ? 'Request' : 'Response')}
-        >
-          <DetailPre value={message.content} />
-        </SectionCard>
-      ))}
+    <div className='grid min-h-[520px] overflow-hidden rounded-xl border bg-background lg:grid-cols-[220px_minmax(0,1fr)]'>
+      <aside className='bg-muted/35 border-b p-2 lg:border-r lg:border-b-0'>
+        <ScrollArea className='max-h-[280px] pr-1 lg:h-[560px] lg:max-h-none'>
+          <div className='space-y-6 pb-2'>
+            <MessageListSection
+              title={t('Request')}
+              messages={requestMessages}
+              currentMessageId={currentMessage.id}
+              onSelect={setSelectedMessage}
+            />
+            <MessageListSection
+              title={t('Response')}
+              messages={responseMessages}
+              currentMessageId={currentMessage.id}
+              onSelect={setSelectedMessage}
+            />
+          </div>
+        </ScrollArea>
+      </aside>
+
+      <section className='bg-muted/10 min-w-0'>
+        <div className='flex flex-wrap items-center justify-between gap-3 px-4 py-3'>
+          <Badge
+            className={cn(
+              'h-10 min-w-20 rounded-full px-5 text-sm font-medium',
+              selectedRoleStyle.badge
+            )}
+          >
+            {formatRoleName(currentMessage.role)}
+          </Badge>
+
+          <div className='flex flex-wrap items-center gap-2'>
+            <div
+              role='group'
+              aria-label={t('View')}
+              className='bg-muted flex rounded-full p-1'
+            >
+              <button
+                type='button'
+                aria-pressed={viewMode === 'pretty'}
+                className={cn(
+                  'focus-visible:ring-ring rounded-full px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+                  viewMode === 'pretty'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setViewMode('pretty')}
+              >
+                {t('Formatted')}
+              </button>
+              <button
+                type='button'
+                aria-pressed={viewMode === 'json'}
+                className={cn(
+                  'focus-visible:ring-ring rounded-full px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+                  viewMode === 'json'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setViewMode('json')}
+              >
+                {t('JSON')}
+              </button>
+            </div>
+
+            <Button
+              type='button'
+              variant='secondary'
+              size='sm'
+              className='h-10 rounded-full px-4 text-sm text-sky-600 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200'
+              onClick={handleCopySelected}
+            >
+              {copiedText === currentMessageJson ? (
+                <Check className='size-3.5' />
+              ) : (
+                <Copy className='size-3.5' />
+              )}
+              {t('Copy')}
+            </Button>
+          </div>
+        </div>
+
+        <div className='space-y-4 px-4 pt-2 pb-4'>
+          <Card className='gap-4 rounded-3xl border bg-card p-4 shadow-sm'>
+            <div className='space-y-1.5 pr-4'>
+              <p className='text-xs font-medium text-foreground'>
+                {viewMode === 'json' ? t('JSON') : t('Content')}
+              </p>
+              <div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs'>
+                <span>
+                  {t('Source')}:{' '}
+                  {t(currentMessage.source === 'request' ? 'Request' : 'Response')}
+                </span>
+                <span>
+                  {t('ID')}: {currentMessage.id}
+                </span>
+                {currentMessage.name && (
+                  <span>
+                    {t('Name')}: {currentMessage.name}
+                  </span>
+                )}
+              </div>
+            </div>
+            <ScrollArea className='max-h-[420px] w-full'>
+              <DetailPre value={selectedContent} />
+              <ScrollBar orientation='horizontal' />
+            </ScrollArea>
+          </Card>
+        </div>
+      </section>
     </div>
   )
 }
