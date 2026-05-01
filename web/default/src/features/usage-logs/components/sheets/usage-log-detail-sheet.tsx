@@ -315,7 +315,7 @@ function SectionCard({
 
 function DetailPre({ value }: { value: string }) {
   return (
-    <pre className='text-muted-foreground font-mono text-xs leading-relaxed break-words whitespace-pre-wrap'>
+    <pre className='text-muted-foreground max-w-full font-mono text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]'>
       {value}
     </pre>
   )
