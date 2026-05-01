@@ -58,7 +58,7 @@ interface UsageLogDetailSheetProps {
 }
 
 type DetailTab = 'overview' | 'raw' | 'messages' | 'tools' | 'metrics' | 'stream'
-type CopiedKey = 'request' | 'response' | 'all' | null
+type CopiedKey = 'request' | 'response' | null
 type MessageViewMode = 'pretty' | 'json'
 
 interface DetailItem {
@@ -147,21 +147,19 @@ function DetailGrid({ items }: { items: DetailItem[] }) {
 function PayloadPanel({
   title,
   payload,
-  showRaw,
   copied,
   downloadName,
   onCopy,
 }: {
   title: string
   payload: ParsedPayload
-  showRaw: boolean
   copied: boolean
   downloadName: string
   onCopy: () => void
 }) {
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
-  const content = showRaw ? payload.preview : payload.formatted
+  const content = payload.formatted
   const isEmpty = payload.raw.length === 0
   const searchResult = useMemo(
     () => getSearchResult(content, search),
@@ -229,12 +227,11 @@ function PayloadPanel({
         </div>
       </div>
       <ScrollArea className='min-h-[220px] flex-1'>
-        <pre className='text-muted-foreground p-3 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap'>
+        <pre className='text-muted-foreground max-w-full p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]'>
           {isEmpty
             ? t('No data in this section')
             : highlightSearchMatch(content, search)}
         </pre>
-        <ScrollBar orientation='horizontal' />
       </ScrollArea>
     </section>
   )
@@ -243,14 +240,12 @@ function PayloadPanel({
 function PayloadPanels({
   requestPayload,
   responsePayload,
-  showRaw,
   copiedKey,
   downloadPrefix,
   onCopy,
 }: {
   requestPayload: ParsedPayload
   responsePayload: ParsedPayload
-  showRaw: boolean
   copiedKey: CopiedKey
   downloadPrefix: string
   onCopy: (key: Exclude<CopiedKey, null>, text: string) => void
@@ -262,7 +257,6 @@ function PayloadPanels({
       <PayloadPanel
         title={t('Request Body')}
         payload={requestPayload}
-        showRaw={showRaw}
         copied={copiedKey === 'request'}
         downloadName={`${downloadPrefix}-request.json`}
         onCopy={() => onCopy('request', requestPayload.raw)}
@@ -270,7 +264,6 @@ function PayloadPanels({
       <PayloadPanel
         title={t('Response Body')}
         payload={responsePayload}
-        showRaw={showRaw}
         copied={copiedKey === 'response'}
         downloadName={`${downloadPrefix}-response.json`}
         onCopy={() => onCopy('response', responsePayload.raw)}
@@ -924,7 +917,6 @@ export function UsageLogDetailSheet({
 }: UsageLogDetailSheetProps) {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<DetailTab>('overview')
-  const [showRaw, setShowRaw] = useState(false)
   const [copiedKey, setCopiedKey] = useState<CopiedKey>(null)
   const { copyToClipboard } = useCopyToClipboard()
 
@@ -1081,65 +1073,9 @@ export function UsageLogDetailSheet({
     setCopiedKey(copied ? key : null)
   }
 
-  const currentTabCopyText = useMemo(() => {
-    switch (activeTab) {
-      case 'messages':
-        return messages
-          .map(
-            (message) =>
-              `[${t(message.source === 'request' ? 'Request' : 'Response')}] ${message.role}\n${message.content}`
-          )
-          .join('\n\n')
-      case 'tools':
-        return tools
-          .map(
-            (entry) =>
-              `[${t(entry.source === 'request' ? 'Request' : 'Response')}] ${t(entry.kind)} · ${entry.name}\n${entry.content}`
-          )
-          .join('\n\n')
-      case 'metrics':
-        return metricItems
-          .filter(hasDetailValue)
-          .map((item) => `${item.label}: ${formatValue(item.value)}`)
-          .join('\n')
-      case 'stream':
-        return streamChunks
-          .map(
-            (chunk) =>
-              `${t('Chunk')} #${chunk.index + 1}${chunk.event ? ` · ${chunk.event}` : ''}\n${chunk.content || chunk.raw}`
-          )
-          .join('\n\n')
-      case 'overview':
-        return overviewItems
-          .map((item) => `${item.label}: ${formatValue(item.value)}`)
-          .join('\n')
-      case 'raw':
-      default:
-        return [
-          `${t('Request Body')}\n${requestPayload.raw}`,
-          `${t('Response Body')}\n${responsePayload.raw}`,
-        ].join('\n\n')
-    }
-  }, [
-    activeTab,
-    messages,
-    metricItems,
-    overviewItems,
-    requestPayload.raw,
-    responsePayload.raw,
-    streamChunks,
-    t,
-    tools,
-  ])
-
-  const copyCurrentTab = () => {
-    handleCopy('all', currentTabCopyText)
-  }
-
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       setActiveTab('overview')
-      setShowRaw(false)
       setCopiedKey(null)
     }
     onOpenChange(nextOpen)
@@ -1166,30 +1102,6 @@ export function UsageLogDetailSheet({
                   {t('Token')}: {formatValue(log?.token_name)}
                 </span>
               </SheetDescription>
-            </div>
-            <div className='flex shrink-0 flex-wrap gap-2'>
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                disabled={!hasDetail || currentTabCopyText.length === 0}
-                onClick={copyCurrentTab}
-              >
-                {copiedKey === 'all' ? (
-                  <Check className='size-3.5' />
-                ) : (
-                  <Copy className='size-3.5' />
-                )}
-                {t('Copy current tab')}
-              </Button>
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                onClick={() => setShowRaw((value) => !value)}
-              >
-                {showRaw ? t('Raw') : t('Formatted')}
-              </Button>
             </div>
           </div>
         </SheetHeader>
@@ -1253,7 +1165,6 @@ export function UsageLogDetailSheet({
                     <PayloadPanels
                       requestPayload={requestPayload}
                       responsePayload={responsePayload}
-                      showRaw={showRaw}
                       copiedKey={copiedKey}
                       downloadPrefix={downloadPrefix}
                       onCopy={handleCopy}

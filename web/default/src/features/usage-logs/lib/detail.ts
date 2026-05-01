@@ -213,6 +213,14 @@ function contentText(value: unknown): string {
   return stringifyValue(value)
 }
 
+function firstContentText(...values: unknown[]): string {
+  for (const value of values) {
+    const text = contentText(value)
+    if (text.length > 0) return text
+  }
+  return ''
+}
+
 function pushMessage(
   messages: DetailMessage[],
   source: DetailPayloadSource,
@@ -960,7 +968,14 @@ function describeStreamEvent(value: unknown): {
     return {
       event: stringValue(value.object) || stringValue(value.type),
       role: stringValue(delta?.role) || stringValue(message?.role),
-      content: contentText(delta?.content ?? delta?.tool_calls ?? message?.content ?? value),
+      content: firstContentText(
+        delta?.content,
+        delta?.reasoning_content,
+        delta?.reasoningContent,
+        delta?.tool_calls,
+        delta?.function_call,
+        message?.content
+      ),
       finishReason: stringValue(choice.finish_reason),
     }
   }

@@ -148,6 +148,17 @@ describe('usage log detail parsing', () => {
     expect(messages.map((item) => item.content)).toEqual(['Hi', 'Hello'])
   })
 
+  test('extracts reasoning stream chunk content without duplicating raw JSON', () => {
+    const payload = parsePayload(
+      'data: {"choices":[{"delta":{"content":null,"reasoning_content":"The","role":"assistant"},"finish_reason":null}]}\n\n'
+    )
+
+    const chunks = extractStreamChunks(payload)
+    expect(chunks[0].content).toBe('The')
+    expect(chunks[0].raw).toContain('reasoning_content')
+    expect(chunks[0].content).not.toBe(chunks[0].raw)
+  })
+
   test('extracts common response message fields', () => {
     const request = parsePayload(JSON.stringify({ prompt: 'Tell me a joke' }))
     const response = parsePayload(JSON.stringify({ output_text: 'Sure.' }))
