@@ -226,13 +226,13 @@ function PayloadPanel({
           </span>
         </div>
       </div>
-      <ScrollArea className='min-h-[220px] flex-1'>
-        <pre className='text-muted-foreground max-w-full p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]'>
+      <div className='min-h-[220px] min-w-0 flex-1 overflow-y-auto overflow-x-hidden'>
+        <pre className='text-muted-foreground w-full min-w-0 max-w-full p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]'>
           {isEmpty
             ? t('No data in this section')
             : highlightSearchMatch(content, search)}
         </pre>
-      </ScrollArea>
+      </div>
     </section>
   )
 }
