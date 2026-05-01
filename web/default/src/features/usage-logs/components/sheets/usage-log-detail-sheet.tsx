@@ -765,7 +765,6 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
       <div className='rounded-lg border'>
         {entries.map((entry) => {
           const info = getToolDisplayInfo(entry)
-          const parameterSummary = info.parameters.map((parameter) => parameter.name)
 
           return (
             <Collapsible key={entry.id} className='group border-b last:border-b-0'>
@@ -774,54 +773,25 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
                   type='button'
                   className='hover:bg-muted/40 focus-visible:ring-ring flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none data-[state=open]:bg-muted/50'
                 >
-                  <div className='min-w-0 flex-1 font-medium'>
-                    <span className='break-words'>{entry.name}</span>
+                  <div className='min-w-0 flex-1 truncate font-medium'>
+                    <span>{entry.name}</span>
                     {info.id && (
                       <span className='text-muted-foreground ms-2 text-xs'>
                         ({info.id})
                       </span>
                     )}
                   </div>
-                  <div className='hidden min-w-0 flex-wrap justify-end gap-2 sm:flex'>
-                    {parameterSummary.length > 0 ? (
-                      parameterSummary.map((parameter) => (
-                        <Badge
-                          key={parameter}
-                          variant='outline'
-                          className='border-blue-500/80 text-blue-500'
-                        >
-                          {parameter}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className='text-muted-foreground text-xs'>
-                        {t('No parameters')}
-                      </span>
-                    )}
-                  </div>
+                  <Badge
+                    variant='outline'
+                    className='shrink-0 border-blue-500/80 text-blue-500'
+                  >
+                    {t('Parameters')}: {info.parameters.length}
+                  </Badge>
                   <ChevronDown className='text-muted-foreground size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180' />
                 </button>
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className='space-y-4 px-4 pb-4'>
-                  <div className='flex flex-wrap gap-2 sm:hidden'>
-                    {parameterSummary.length > 0 ? (
-                      parameterSummary.map((parameter) => (
-                        <Badge
-                          key={parameter}
-                          variant='outline'
-                          className='border-blue-500/80 text-blue-500'
-                        >
-                          {parameter}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className='text-muted-foreground text-xs'>
-                        {t('No parameters')}
-                      </span>
-                    )}
-                  </div>
-
                   {info.description && (
                     <p className='text-sm leading-relaxed'>{info.description}</p>
                   )}
