@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"bun --cwd \\\"/Volumes/Nick-OMV-Storage/Workspace/new-api/web/default\\\" test \\\"tests/usage-logs/detail.test.mjs\\\"\",\"timeout\":120000,\"description\":\"运行 usage log 详情解析测试\"}",
-  "error": "Exit code 1\nerror: Script not found \"test\"",
-  "timestamp": "2026-05-01T08:09:59.254Z",
-  "retry_count": 1
-}

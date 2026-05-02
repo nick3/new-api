@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd \\\"/Volumes/Nick-OMV-Storage/Workspace/new-api/web/default\\\" && bun -e \\\"for (const file of ['en','zh','fr','ja','ru','vi']) JSON.parse(await Bun.file(\\\\`src/i18n/locales/${file}.json\\\\`...",
-  "error": "Exit code 1\nENOENT: no such file or directory, open 'src/i18n/locales/.json'\n    path: \"src/i18n/locales/.json\",\n syscall: \"open\",\n   errno: -2,\n    code: \"ENOENT\"\n\n\nBun v1.3.7 (macOS arm64)",
-  "timestamp": "2026-05-01T09:53:07.738Z",
-  "retry_count": 1
-}

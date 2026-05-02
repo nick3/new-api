@@ -1,8 +1,0 @@
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"design-consultation"}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"investigate"}
-{"t":0,"agent":"a19a370","agent_type":"unknown","event":"agent_stop","success":true}
-{"t":0,"agent":"a04a171","agent_type":"unknown","event":"agent_stop","success":true}
-{"t":0,"agent":"a45243b","agent_type":"unknown","event":"agent_stop","success":true}
-{"t":0,"agent":"aad9efe","agent_type":"unknown","event":"agent_stop","success":true}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"ship"}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"investigate"}
