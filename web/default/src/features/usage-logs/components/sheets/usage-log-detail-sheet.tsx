@@ -761,27 +761,22 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
 
           return (
             <Collapsible key={entry.id} className='group border-b last:border-b-0'>
-              <CollapsibleTrigger asChild>
-                <button
-                  type='button'
-                  className='hover:bg-muted/40 focus-visible:ring-ring flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none data-[state=open]:bg-muted/50'
+              <CollapsibleTrigger className='hover:bg-muted/40 focus-visible:ring-ring flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none data-[state=open]:bg-muted/50'>
+                <div className='min-w-0 flex-1 truncate font-medium'>
+                  <span>{entry.name}</span>
+                  {info.id && (
+                    <span className='text-muted-foreground ms-2 text-xs'>
+                      ({info.id})
+                    </span>
+                  )}
+                </div>
+                <Badge
+                  variant='outline'
+                  className='shrink-0 border-blue-500/80 text-blue-500'
                 >
-                  <div className='min-w-0 flex-1 truncate font-medium'>
-                    <span>{entry.name}</span>
-                    {info.id && (
-                      <span className='text-muted-foreground ms-2 text-xs'>
-                        ({info.id})
-                      </span>
-                    )}
-                  </div>
-                  <Badge
-                    variant='outline'
-                    className='shrink-0 border-blue-500/80 text-blue-500'
-                  >
-                    {t('Parameters')}: {info.parameters.length}
-                  </Badge>
-                  <ChevronDown className='text-muted-foreground size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180' />
-                </button>
+                  {t('Parameters')}: {info.parameters.length}
+                </Badge>
+                <ChevronDown className='text-muted-foreground size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180' />
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className='space-y-4 px-4 pb-4'>
