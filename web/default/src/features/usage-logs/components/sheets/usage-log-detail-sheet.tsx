@@ -957,6 +957,7 @@ export function UsageLogDetailSheet({
   const overviewItems = useMemo<DetailItem[]>(
     () => [
       { label: t('Request ID'), value: log?.request_id },
+      { label: t('Upstream Request ID'), value: log?.upstream_request_id },
       { label: t('Model'), value: log?.model_name },
       ...(isAdmin
         ? [
