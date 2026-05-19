@@ -163,7 +163,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			}
 		}
 
-		logger.LogDebug(c, "Gemini request body: "+string(jsonData))
+		logger.LogDebug(c, "Gemini request body: %s", jsonData)
 
 		captureStructuredRequestBodyForLog(c, jsonData)
 		requestBody = bytes.NewReader(jsonData)
@@ -263,7 +263,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 			return newAPIErrorFromParamOverride(err)
 		}
 	}
-	logger.LogDebug(c, "Gemini embedding request body: "+string(jsonData))
+	logger.LogDebug(c, "Gemini embedding request body: %s", jsonData)
 	captureStructuredRequestBodyForLog(c, jsonData)
 	requestBody = bytes.NewReader(jsonData)
 
