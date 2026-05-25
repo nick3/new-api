@@ -34,10 +34,14 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useIsAdmin } from '@/hooks/use-admin'
-import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { useTableUrlState, type NavigateFn } from '@/hooks/use-table-url-state'
 import { TableCell, TableRow } from '@/components/ui/table'
 import { DataTablePage } from '@/components/data-table'
-import { DEFAULT_LOGS_DATA, LOG_TYPE_ENUM } from '../constants'
+import {
+  DEFAULT_LOGS_DATA,
+  LOG_TYPE_ALL_VALUE,
+  LOG_TYPE_ENUM,
+} from '../constants'
 import type { UsageLog } from '../data/schema'
 import { useColumnsByCategory } from '../lib/columns'
 import { fetchLogsByCategory } from '../lib/utils'
@@ -53,6 +57,11 @@ const logTypeRowTint: Record<number, string> = {
   [LOG_TYPE_ENUM.REFUND]: 'bg-blue-50/30 dark:bg-blue-950/15',
 }
 
+function deserializeLogTypeFilter(value: unknown): unknown[] {
+  const values = Array.isArray(value) ? value : value ? [value] : []
+  return values.filter((item) => String(item) !== LOG_TYPE_ALL_VALUE)
+}
+
 interface UsageLogsTableProps {
   logCategory: LogCategory
 }
@@ -62,6 +71,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const isAdmin = useIsAdmin()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const routeNavigate = route.useNavigate()
+  const navigate: NavigateFn = (opts) => routeNavigate(opts as never)
   const [selectedLogDetail, setSelectedLogDetail] = useState<UsageLog | null>(
     null
   )
@@ -74,12 +85,17 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
-    navigate: route.useNavigate(),
+    search: searchParams,
+    navigate,
     pagination: { defaultPage: 1, defaultPageSize: isMobile ? 20 : 100 },
     globalFilter: { enabled: false },
     columnFilters: [
-      { columnId: 'created_at', searchKey: 'type', type: 'array' as const },
+      {
+        columnId: 'created_at',
+        searchKey: 'type',
+        type: 'array' as const,
+        deserialize: deserializeLogTypeFilter,
+      },
       { columnId: 'model_name', searchKey: 'model', type: 'string' as const },
       { columnId: 'token_name', searchKey: 'token', type: 'string' as const },
       { columnId: 'group', searchKey: 'group', type: 'string' as const },
@@ -161,7 +177,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     getFacetedRowModel: getFacetedRowModel(),
     getFacetedUniqueValues: getFacetedUniqueValues(),
     manualPagination: true,
-    manualFiltering: true,
     pageCount: Math.ceil((data?.total || 0) / pagination.pageSize),
   })
 
@@ -208,9 +223,15 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
             isCommon && logType != null ? (logTypeRowTint[logType] ?? '') : ''
 
           return (
-            <TableRow key={row.id} className={cn('transition-colors', tintClass)}>
+            <TableRow
+              key={row.id}
+              className={cn('transition-colors', tintClass)}
+            >
               {row.getVisibleCells().map((cell) => (
-                <TableCell key={cell.id} className={isCommon ? 'py-2' : 'py-3.5'}>
+                <TableCell
+                  key={cell.id}
+                  className={isCommon ? 'py-2' : 'py-3.5'}
+                >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </TableCell>
               ))}
