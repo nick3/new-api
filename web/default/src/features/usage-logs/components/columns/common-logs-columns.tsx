@@ -92,6 +92,12 @@ function getGroupRatioText(other: LogOtherData | null): string | null {
   return null
 }
 
+function splitQuotaDisplay(value: string): { prefix: string; amount: string } {
+  const match = value.match(/^([^0-9+\-.,\s]+)(.+)$/)
+  if (!match) return { prefix: '', amount: value }
+  return { prefix: match[1], amount: match[2] }
+}
+
 function buildDetailSegments(
   log: UsageLog,
   other: LogOtherData | null,
@@ -286,6 +292,7 @@ export function useCommonLogsColumns(
               variant={config.color as StatusBadgeProps['variant']}
               size='sm'
               copyable={false}
+              className='!text-xs [&_span]:!text-xs'
             />
           </div>
         )
@@ -304,6 +311,7 @@ export function useCommonLogsColumns(
     columns.push(
       {
         id: 'channel',
+        accessorFn: (row) => row.channel,
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title={t('Channel')} />
         ),
@@ -341,6 +349,7 @@ export function useCommonLogsColumns(
                       autoColor={String(log.channel)}
                       copyText={String(log.channel)}
                       size='sm'
+                      showDot={false}
                       className='font-mono'
                     />
                     {affinity && (
@@ -403,10 +412,11 @@ export function useCommonLogsColumns(
             </TooltipProvider>
           )
         },
-        meta: { label: t('Channel'), mobileHidden: true },
+        meta: { label: t('Channel') },
       },
       {
         id: 'user',
+        accessorFn: (row) => row.username,
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title={t('User')} />
         ),
@@ -427,7 +437,7 @@ export function useCommonLogsColumns(
                 setUserInfoDialogOpen(true)
               }}
             >
-              <Avatar className='ring-border/60 size-6 ring-1'>
+              <Avatar className='ring-border/60 size-6 ring-1 max-sm:hidden'>
                 <AvatarFallback
                   className={cn(
                     'text-[11px] font-semibold',
@@ -459,7 +469,7 @@ export function useCommonLogsColumns(
             </button>
           )
         },
-        meta: { label: t('User'), mobileHidden: true },
+        meta: { label: t('User') },
       }
     )
   }
@@ -563,7 +573,9 @@ export function useCommonLogsColumns(
             ? log.completion_tokens / useTime
             : null
         const timeVariant = getResponseTimeColor(useTime, log.completion_tokens)
-        const frtVariant = frt ? getFirstResponseTimeColor(frt / 1000) : null
+        const frtVariant = frt
+          ? getFirstResponseTimeColor(frt / 1000)
+          : 'neutral'
 
         const timingBgMap: Record<string, string> = {
           success:
@@ -584,7 +596,7 @@ export function useCommonLogsColumns(
                 variant={timeVariant as StatusBadgeProps['variant']}
                 size='sm'
                 copyable={false}
-                className={cn('font-mono', timingBgMap[timeVariant])}
+                className={cn('rounded-md font-mono', timingBgMap[timeVariant])}
               />
               {log.is_stream &&
                 (frt != null && frt > 0 ? (
@@ -595,7 +607,7 @@ export function useCommonLogsColumns(
                     showDot={false}
                     copyable={false}
                     className={cn(
-                      'font-mono',
+                      'rounded-md font-mono',
                       timingBgMap[frtVariant ?? 'neutral']
                     )}
                   />
@@ -606,7 +618,7 @@ export function useCommonLogsColumns(
                     size='sm'
                     showDot={false}
                     copyable={false}
-                    className={timingBgMap.neutral}
+                    className={cn('rounded-md font-mono', timingBgMap.neutral)}
                   />
                 ))}
             </div>
@@ -652,7 +664,7 @@ export function useCommonLogsColumns(
           </div>
         )
       },
-      meta: { label: t('Timing'), mobileHidden: true },
+      meta: { label: t('Timing') },
     },
 
     {
@@ -703,7 +715,7 @@ export function useCommonLogsColumns(
           </div>
         )
       },
-      meta: { label: 'Tokens', mobileHidden: true },
+      meta: { label: 'Tokens' },
     },
 
     {
@@ -745,11 +757,15 @@ export function useCommonLogsColumns(
         }
 
         const quotaStr = formatLogQuota(quota)
+        const quotaDisplay = splitQuotaDisplay(quotaStr)
 
         return (
           <div className='flex flex-col gap-0.5'>
-            <span className='border-border/80 bg-muted/60 inline-flex w-fit items-center rounded-md border px-1.5 py-0.5 [font-family:var(--font-body)] font-semibold tabular-nums'>
-              {quotaStr}
+            <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 text-sm leading-none [font-family:var(--font-body)] font-semibold tabular-nums'>
+              {quotaDisplay.prefix && (
+                <span className='mr-1'>{quotaDisplay.prefix}</span>
+              )}
+              <span>{quotaDisplay.amount}</span>
             </span>
           </div>
         )
