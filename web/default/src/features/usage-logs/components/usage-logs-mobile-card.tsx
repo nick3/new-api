@@ -183,7 +183,7 @@ function CommonLogsCard<TData>({
 
   const modelCell = cells.get('model_name')
   const quotaCell = cells.get('quota')
-  const original = cells.get('created_at')?.row.original as
+  const rowData = cells.get('created_at')?.row.original as
     | Record<string, unknown>
     | undefined
 
@@ -202,7 +202,10 @@ function CommonLogsCard<TData>({
           <div className='text-muted-foreground mb-1 text-[11px] leading-none font-medium select-none'>
             {t('Time')}
           </div>
-          <MobileLogTimeStatus createdAt={original?.created_at} type={original?.type} />
+          <MobileLogTimeStatus
+            createdAt={rowData?.created_at}
+            type={rowData?.type}
+          />
         </div>
         <SummaryField
           label={t('Channel')}
