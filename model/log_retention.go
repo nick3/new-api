@@ -34,6 +34,9 @@ func runLogDetailCleanupLoop() {
 }
 
 func pruneExpiredLogDetails(ctx context.Context) {
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return
+	}
 	days := common.DetailedLogRetentionDays
 	if days <= 0 {
 		return
