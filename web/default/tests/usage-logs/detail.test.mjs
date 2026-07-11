@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+
 import {
   extractDetailMessages,
   extractDetailTools,
@@ -22,8 +23,9 @@ describe('usage log detail parsing', () => {
       })
     )
 
-    expect(extractDetailMessages(request, response).map((item) => item.content))
-      .toEqual(['Be concise', 'Hello', 'Hi'])
+    expect(
+      extractDetailMessages(request, response).map((item) => item.content)
+    ).toEqual(['Be concise', 'Hello', 'Hi'])
   })
 
   test('extracts Chat Completions request messages from truncated payloads', () => {
@@ -41,8 +43,9 @@ describe('usage log detail parsing', () => {
     const response = parsePayload('{}')
 
     expect(request.isTruncated).toBe(true)
-    expect(extractDetailMessages(request, response).map((item) => item.role))
-      .toEqual(['system', 'user'])
+    expect(
+      extractDetailMessages(request, response).map((item) => item.role)
+    ).toEqual(['system', 'user'])
   })
 
   test('extracts Responses API request input messages', () => {
@@ -62,8 +65,9 @@ describe('usage log detail parsing', () => {
     )
     const response = parsePayload('{}')
 
-    expect(extractDetailMessages(request, response).map((item) => item.content))
-      .toEqual(['Follow policy', 'Search docs'])
+    expect(
+      extractDetailMessages(request, response).map((item) => item.content)
+    ).toEqual(['Follow policy', 'Search docs'])
   })
 
   test('extracts Messages API system and user request messages', () => {
@@ -80,8 +84,9 @@ describe('usage log detail parsing', () => {
     )
     const response = parsePayload('{}')
 
-    expect(extractDetailMessages(request, response).map((item) => item.content))
-      .toEqual(['You are helpful', 'Hello Claude'])
+    expect(
+      extractDetailMessages(request, response).map((item) => item.content)
+    ).toEqual(['You are helpful', 'Hello Claude'])
   })
 
   test('extracts tool definitions and tool calls', () => {

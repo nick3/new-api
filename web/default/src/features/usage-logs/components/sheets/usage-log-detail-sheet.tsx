@@ -1,22 +1,40 @@
-import { useMemo, useState, type ReactNode } from 'react'
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { Check, ChevronDown, Copy, Download, FileText } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { Button } from '@/components/design-system/button'
+import { Input } from '@/components/design-system/input'
 import {
-  formatLogQuota,
-  formatTimestampToDate,
-  formatUseTime,
-} from '@/lib/format'
-import { cn } from '@/lib/utils'
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/design-system/tabs'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { Input } from '@/components/ui/input'
 import {
   Empty,
   EmptyDescription,
@@ -32,7 +50,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import {
+  formatLogQuota,
+  formatTimestampToDate,
+  formatUseTime,
+} from '@/lib/format'
+import { cn } from '@/lib/utils'
+
 import type { UsageLog } from '../../data/schema'
 import {
   DETAIL_PREVIEW_BYTES,
@@ -57,7 +82,13 @@ interface UsageLogDetailSheetProps {
   onOpenChange: (open: boolean) => void
 }
 
-type DetailTab = 'overview' | 'raw' | 'messages' | 'tools' | 'metrics' | 'stream'
+type DetailTab =
+  | 'overview'
+  | 'raw'
+  | 'messages'
+  | 'tools'
+  | 'metrics'
+  | 'stream'
 type CopiedKey = 'request' | 'response' | null
 type MessageViewMode = 'pretty' | 'json'
 
@@ -91,7 +122,10 @@ function getSearchResult(content: string, query: string): SearchResult {
 
   while (index !== -1) {
     count += 1
-    index = normalizedContent.indexOf(normalizedQuery, index + normalizedQuery.length)
+    index = normalizedContent.indexOf(
+      normalizedQuery,
+      index + normalizedQuery.length
+    )
   }
 
   return { count, firstIndex }
@@ -107,7 +141,7 @@ function highlightSearchMatch(content: string, query: string): ReactNode {
   return (
     <>
       {content.slice(0, index)}
-      <mark className='rounded bg-yellow-200 px-0.5 text-yellow-950 dark:bg-yellow-500/30 dark:text-yellow-100'>
+      <mark className='bg-warning/20 text-foreground rounded px-0.5'>
         {content.slice(index, index + normalizedQuery.length)}
       </mark>
       {content.slice(index + normalizedQuery.length)}
@@ -126,7 +160,9 @@ function downloadText(filename: string, text: string) {
 }
 
 function safeFilename(value: string | null | undefined): string {
-  return (value || 'usage-log').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 80)
+  return (value || 'usage-log')
+    .replaceAll(/[^a-zA-Z0-9._-]+/g, '-')
+    .slice(0, 80)
 }
 
 function DetailGrid({ items }: { items: DetailItem[] }) {
@@ -172,7 +208,7 @@ function PayloadPanel({
   }
 
   return (
-    <section className='bg-card/60 flex min-h-0 min-w-0 max-w-full flex-col overflow-hidden rounded-lg border'>
+    <section className='bg-card/60 flex min-h-0 max-w-full min-w-0 flex-col overflow-hidden rounded-lg border'>
       <div className='min-w-0 space-y-3 border-b p-3'>
         <div className='flex min-w-0 items-center justify-between gap-2'>
           <div className='min-w-0'>
@@ -226,8 +262,8 @@ function PayloadPanel({
           </span>
         </div>
       </div>
-      <div className='min-h-[220px] min-w-0 flex-1 overflow-y-auto overflow-x-hidden'>
-        <pre className='text-muted-foreground w-full min-w-0 max-w-full p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]'>
+      <div className='min-h-[220px] min-w-0 flex-1 overflow-x-hidden overflow-y-auto'>
+        <pre className='text-muted-foreground w-full max-w-full min-w-0 p-3 font-mono text-xs leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap'>
           {isEmpty
             ? t('No data in this section')
             : highlightSearchMatch(content, search)}
@@ -253,7 +289,7 @@ function PayloadPanels({
   const { t } = useTranslation()
 
   return (
-    <div className='grid min-h-0 min-w-0 max-w-full gap-4 overflow-hidden'>
+    <div className='grid min-h-0 max-w-full min-w-0 gap-4 overflow-hidden'>
       <PayloadPanel
         title={t('Request Body')}
         payload={requestPayload}
@@ -272,7 +308,13 @@ function PayloadPanels({
   )
 }
 
-function EmptyTabState({ title, description }: { title: string; description: string }) {
+function EmptyTabState({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
   return (
     <Empty className='min-h-[260px] border-none'>
       <EmptyHeader>
@@ -308,7 +350,7 @@ function SectionCard({
 
 function DetailPre({ value }: { value: string }) {
   return (
-    <pre className='text-muted-foreground max-w-full font-mono text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]'>
+    <pre className='text-muted-foreground max-w-full font-mono text-xs leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap'>
       {value}
     </pre>
   )
@@ -368,7 +410,9 @@ function parseArgumentKeys(value: unknown): string[] {
 }
 
 function getToolSchema(record: DetailJsonRecord): DetailJsonRecord | null {
-  const functionRecord = isDetailRecord(record.function) ? record.function : null
+  const functionRecord = isDetailRecord(record.function)
+    ? record.function
+    : null
   const candidates = [
     record.input_schema,
     record.inputSchema,
@@ -384,7 +428,9 @@ function getToolSchema(record: DetailJsonRecord): DetailJsonRecord | null {
 }
 
 function getToolArgumentKeys(record: DetailJsonRecord): string[] {
-  const functionRecord = isDetailRecord(record.function) ? record.function : null
+  const functionRecord = isDetailRecord(record.function)
+    ? record.function
+    : null
   const candidates = [
     record.arguments,
     record.input,
@@ -399,7 +445,9 @@ function getToolArgumentKeys(record: DetailJsonRecord): string[] {
 
 function getToolParameters(record: DetailJsonRecord): ToolParameterInfo[] {
   const schema = getToolSchema(record)
-  const properties = isDetailRecord(schema?.properties) ? schema.properties : null
+  const properties = isDetailRecord(schema?.properties)
+    ? schema.properties
+    : null
 
   if (properties) {
     const required = new Set(stringArray(schema?.required))
@@ -414,7 +462,7 @@ function getToolParameters(record: DetailJsonRecord): ToolParameterInfo[] {
     })
   }
 
-  return Array.from(new Set(getToolArgumentKeys(record))).map((name) => ({
+  return [...new Set(getToolArgumentKeys(record))].map((name) => ({
     name,
     required: false,
   }))
@@ -424,7 +472,9 @@ function getToolDisplayInfo(entry: DetailToolEntry): ToolDisplayInfo {
   const record = parseToolContent(entry.content)
   if (!record) return { parameters: [] }
 
-  const functionRecord = isDetailRecord(record.function) ? record.function : null
+  const functionRecord = isDetailRecord(record.function)
+    ? record.function
+    : null
 
   return {
     id: firstDetailString(
@@ -436,7 +486,10 @@ function getToolDisplayInfo(entry: DetailToolEntry): ToolDisplayInfo {
       record.call_id,
       record.callId
     ),
-    description: firstDetailString(record.description, functionRecord?.description),
+    description: firstDetailString(
+      record.description,
+      functionRecord?.description
+    ),
     parameters: getToolParameters(record),
   }
 }
@@ -446,29 +499,29 @@ const messageRoleStyles: Record<
   { text: string; badge: string; active: string }
 > = {
   assistant: {
-    text: 'text-[#02a999]',
-    badge: 'border-transparent bg-[#02a999] text-white',
-    active: 'bg-[#02a999]/10 ring-[#02a999]/20',
+    text: 'text-primary',
+    badge: 'border-transparent bg-primary text-primary-foreground',
+    active: 'bg-primary/10 ring-primary/20',
   },
   developer: {
-    text: 'text-[#0f6cbd]',
-    badge: 'border-transparent bg-[#0f6cbd] text-white',
-    active: 'bg-[#0f6cbd]/10 ring-[#0f6cbd]/20',
+    text: 'text-accent-foreground',
+    badge: 'border-transparent bg-accent text-accent-foreground',
+    active: 'bg-accent ring-border',
   },
   system: {
-    text: 'text-violet-600 dark:text-violet-300',
-    badge: 'border-transparent bg-violet-500 text-white',
-    active: 'bg-violet-500/10 ring-violet-500/20',
+    text: 'text-muted-foreground',
+    badge: 'border-transparent bg-muted text-muted-foreground',
+    active: 'bg-muted ring-border',
   },
   tool: {
-    text: 'text-[#13a10e]',
-    badge: 'border-transparent bg-[#13a10e] text-white',
-    active: 'bg-[#13a10e]/10 ring-[#13a10e]/20',
+    text: 'text-foreground',
+    badge: 'border-border bg-background text-foreground',
+    active: 'bg-muted/50 ring-border',
   },
   user: {
-    text: 'text-[#eaa300]',
-    badge: 'border-transparent bg-[#f5a524] text-zinc-950',
-    active: 'bg-[#eaa300]/15 ring-[#eaa300]/25',
+    text: 'text-secondary-foreground',
+    badge: 'border-transparent bg-secondary text-secondary-foreground',
+    active: 'bg-secondary ring-border',
   },
 }
 
@@ -479,18 +532,18 @@ const defaultMessageRoleStyle = {
 }
 
 function formatRoleName(role: string): string {
-  const normalized = role.replace(/[_-]+/g, ' ').trim()
+  const normalized = role.replaceAll(/[_-]+/g, ' ').trim()
   if (!normalized) return 'Message'
-  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase())
+  return normalized.replaceAll(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 function getMessageRoleStyle(role: string) {
-  const normalizedRole = role.toLowerCase().replace(/[_-].*$/, '')
+  const normalizedRole = role.toLowerCase().replaceAll(/[_-].*$/g, '')
   return messageRoleStyles[normalizedRole] ?? defaultMessageRoleStyle
 }
 
 function getMessagePreview(message: DetailMessage): string {
-  const preview = message.content.replace(/\s+/g, ' ').trim()
+  const preview = message.content.replaceAll(/\s+/g, ' ').trim()
   if (!preview) return '-'
   return preview.length > 72 ? `${preview.slice(0, 72)}...` : preview
 }
@@ -547,9 +600,7 @@ function MessageListSection({
               aria-pressed={selected}
               className={cn(
                 'focus-visible:ring-ring box-border block w-full max-w-full min-w-0 overflow-hidden rounded-lg px-4 py-1.5 text-left transition-colors ring-1 ring-transparent focus-visible:ring-2 focus-visible:outline-none',
-                selected
-                  ? roleStyle.active
-                  : 'hover:bg-background/80'
+                selected ? roleStyle.active : 'hover:bg-background/80'
               )}
               onClick={() => onSelect(message)}
             >
@@ -621,9 +672,9 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
   }
 
   return (
-    <div className='grid h-full min-h-0 overflow-hidden rounded-xl border bg-background lg:grid-cols-[220px_minmax(0,1fr)]'>
+    <div className='bg-background grid h-full min-h-0 overflow-hidden rounded-xl border lg:grid-cols-[220px_minmax(0,1fr)]'>
       <aside className='bg-muted/35 min-h-0 min-w-0 overflow-hidden border-b p-2 lg:border-r lg:border-b-0'>
-        <div className='h-full max-h-[280px] w-full min-w-0 overflow-y-auto overflow-x-hidden pr-1 lg:max-h-none'>
+        <div className='h-full max-h-[280px] w-full min-w-0 overflow-x-hidden overflow-y-auto pr-1 lg:max-h-none'>
           <div className='w-full min-w-0 space-y-6 overflow-hidden pb-2'>
             <MessageListSection
               title={t('Request')}
@@ -645,7 +696,7 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
         <div className='flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-3'>
           <Badge
             className={cn(
-              'h-10 min-w-20 rounded-full px-5 text-sm font-medium',
+              'min-w-20 justify-center text-sm font-medium',
               selectedRoleStyle.badge
             )}
           >
@@ -656,15 +707,15 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
             <div
               role='group'
               aria-label={t('View')}
-              className='bg-muted flex rounded-full p-1'
+              className='bg-muted flex rounded-md p-1'
             >
               <button
                 type='button'
                 aria-pressed={viewMode === 'pretty'}
                 className={cn(
-                  'focus-visible:ring-ring rounded-full px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+                  'focus-visible:ring-ring rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
                   viewMode === 'pretty'
-                    ? 'bg-background text-foreground shadow-sm'
+                    ? 'bg-background text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
                 onClick={() => setViewMode('pretty')}
@@ -675,9 +726,9 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
                 type='button'
                 aria-pressed={viewMode === 'json'}
                 className={cn(
-                  'focus-visible:ring-ring rounded-full px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+                  'focus-visible:ring-ring rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
                   viewMode === 'json'
-                    ? 'bg-background text-foreground shadow-sm'
+                    ? 'bg-background text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
                 onClick={() => setViewMode('json')}
@@ -690,7 +741,7 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
               type='button'
               variant='secondary'
               size='sm'
-              className='h-10 rounded-full px-4 text-sm text-sky-600 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200'
+              className='text-primary hover:text-primary/80'
               onClick={handleCopySelected}
             >
               {copiedText === selectedContent ? (
@@ -704,15 +755,17 @@ function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
         </div>
 
         <div className='flex min-h-0 flex-1 px-4 pt-2 pb-4'>
-          <Card className='flex min-h-0 flex-1 flex-col gap-4 rounded-3xl border bg-card p-4 shadow-sm'>
+          <Card className='bg-card flex min-h-0 flex-1 flex-col gap-4 border p-4'>
             <div className='space-y-1.5 pr-4'>
-              <p className='text-xs font-medium text-foreground'>
+              <p className='text-foreground text-xs font-medium'>
                 {viewMode === 'json' ? t('JSON') : t('Content')}
               </p>
               <div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs'>
                 <span>
                   {t('Source')}:{' '}
-                  {t(currentMessage.source === 'request' ? 'Request' : 'Response')}
+                  {t(
+                    currentMessage.source === 'request' ? 'Request' : 'Response'
+                  )}
                 </span>
                 <span>
                   {t('ID')}: {currentMessage.id}
@@ -742,7 +795,9 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
     return (
       <EmptyTabState
         title={t('No parsed tools')}
-        description={t('No tool definitions or tool calls were found in the saved payloads.')}
+        description={t(
+          'No tool definitions or tool calls were found in the saved payloads.'
+        )}
       />
     )
   }
@@ -751,7 +806,7 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
     <section className='space-y-3'>
       <div className='flex flex-wrap items-center gap-2'>
         <h3 className='text-sm font-semibold'>{t('Tool List')}</h3>
-        <Badge variant='outline' className='border-orange-500 text-orange-500'>
+        <Badge variant='outline' className='border-warning/40 text-warning'>
           {t('Quantity')}: {entries.length}
         </Badge>
       </div>
@@ -760,8 +815,11 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
           const info = getToolDisplayInfo(entry)
 
           return (
-            <Collapsible key={entry.id} className='group border-b last:border-b-0'>
-              <CollapsibleTrigger className='hover:bg-muted/40 focus-visible:ring-ring flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none data-[state=open]:bg-muted/50'>
+            <Collapsible
+              key={entry.id}
+              className='group border-b last:border-b-0'
+            >
+              <CollapsibleTrigger className='hover:bg-muted/40 focus-visible:ring-ring data-[state=open]:bg-muted/50 flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none'>
                 <div className='min-w-0 flex-1 truncate font-medium'>
                   <span>{entry.name}</span>
                   {info.id && (
@@ -772,7 +830,7 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
                 </div>
                 <Badge
                   variant='outline'
-                  className='shrink-0 border-blue-500/80 text-blue-500'
+                  className='text-muted-foreground shrink-0'
                 >
                   {t('Parameters')}: {info.parameters.length}
                 </Badge>
@@ -781,7 +839,9 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
               <CollapsibleContent>
                 <div className='space-y-4 px-4 pb-4'>
                   {info.description && (
-                    <p className='text-sm leading-relaxed'>{info.description}</p>
+                    <p className='text-sm leading-relaxed'>
+                      {info.description}
+                    </p>
                   )}
 
                   {info.parameters.length > 0 && (
@@ -794,34 +854,39 @@ function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
                           <div className='flex min-w-0 flex-wrap items-center gap-2'>
                             <Badge
                               variant='outline'
-                              className='border-blue-500/80 text-blue-500'
+                              className='text-muted-foreground'
                             >
                               {parameter.name}
                             </Badge>
                             {parameter.type && (
-                              <Badge variant='secondary'>{parameter.type}</Badge>
+                              <Badge variant='secondary'>
+                                {parameter.type}
+                              </Badge>
                             )}
                             <Badge
                               variant='outline'
                               className={cn(
                                 parameter.required
-                                  ? 'border-orange-500 text-orange-500'
+                                  ? 'border-warning/40 text-warning'
                                   : 'text-muted-foreground'
                               )}
                             >
-                              {parameter.required ? t('Required') : t('Optional')}
+                              {parameter.required
+                                ? t('Required')
+                                : t('Optional')}
                             </Badge>
                           </div>
                           <p className='text-muted-foreground min-w-0 leading-relaxed'>
-                            {parameter.description || t('No parameter description')}
+                            {parameter.description ||
+                              t('No parameter description')}
                           </p>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  <div className='rounded-md border bg-muted/30 p-3'>
-                    <p className='mb-2 text-xs font-medium text-foreground'>
+                  <div className='bg-muted/30 rounded-md border p-3'>
+                    <p className='text-foreground mb-2 text-xs font-medium'>
                       {t('Raw JSON')}
                     </p>
                     <DetailPre value={entry.content} />
@@ -876,7 +941,7 @@ function StreamPanel({ chunks }: { chunks: DetailStreamChunk[] }) {
         >
           <div className='space-y-3'>
             {chunk.content && <DetailPre value={chunk.content} />}
-            <div className='rounded-md border bg-muted/30 p-3'>
+            <div className='bg-muted/30 rounded-md border p-3'>
               <DetailPre value={chunk.raw} />
             </div>
           </div>
@@ -977,7 +1042,10 @@ export function UsageLogDetailSheet({
       { label: t('Tokens'), value: tokenText },
       { label: t('Latency'), value: log ? formatUseTime(log.use_time) : null },
       { label: t('Path'), value: other?.request_path },
-      { label: t('Retry Chain'), value: other?.request_conversion?.join(' → ') },
+      {
+        label: t('Retry Chain'),
+        value: other?.request_conversion?.join(' → '),
+      },
       { label: t('Stream'), value: log?.is_stream ? t('Yes') : t('No') },
       {
         label: t('First response time'),
@@ -1023,7 +1091,10 @@ export function UsageLogDetailSheet({
       { label: t('Group Ratio'), value: other?.group_ratio },
       { label: t('User Group Ratio'), value: other?.user_group_ratio },
       { label: t('Cache Tokens'), value: other?.cache_tokens },
-      { label: t('Cache Creation Tokens'), value: other?.cache_creation_tokens },
+      {
+        label: t('Cache Creation Tokens'),
+        value: other?.cache_creation_tokens,
+      },
       {
         label: t('Audio Input Tokens'),
         value: other?.audio_input ?? other?.audio_input_token_count,
@@ -1039,7 +1110,10 @@ export function UsageLogDetailSheet({
         value: other?.image_generation_call ? t('Yes') : null,
       },
       { label: t('Request Path'), value: other?.request_path },
-      { label: t('Retry Chain'), value: other?.request_conversion?.join(' → ') },
+      {
+        label: t('Retry Chain'),
+        value: other?.request_conversion?.join(' → '),
+      },
       { label: t('Upstream Model'), value: other?.upstream_model_name },
       ...(isAdmin
         ? [

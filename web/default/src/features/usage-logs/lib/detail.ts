@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import type { UsageLog } from '../data/schema'
 
 export const DETAIL_TRUNCATE_BYTES = 500 * 1024
@@ -76,18 +94,20 @@ function firstString(...values: unknown[]): string | undefined {
 function decodeEscapedText(value: string): string {
   if (!/(\\u[0-9a-fA-F]{4})|(\\n)|(\\r)|(\\t)/.test(value)) return value
   return value
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, code: string) =>
+    .replaceAll(/\\u([0-9a-fA-F]{4})/g, (_, code: string) =>
       String.fromCharCode(Number.parseInt(code, 16))
     )
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
+    .replaceAll('\\n', '\n')
+    .replaceAll('\\r', '\r')
+    .replaceAll('\\t', '\t')
 }
 
 function stringifyValue(value: unknown): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
   return JSON.stringify(value, null, 2)
 }
 
@@ -126,7 +146,9 @@ function formatToolCallContent(value: JsonRecord): string {
     deltaValue?.partial_json ??
     {}
   const label = value.type === 'tool_use' ? 'tool_use' : 'function_call'
-  return [`[${label}] ${name}`, toFormattedString(argsSource)].filter(Boolean).join('\n')
+  return [`[${label}] ${name}`, toFormattedString(argsSource)]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function formatToolResultContent(value: JsonRecord): string {
@@ -140,14 +162,19 @@ function formatToolResultContent(value: JsonRecord): string {
     value.message ??
     value.body ??
     value
-  const name = firstString(value.name, value.tool_name, value.toolName) || toolName(value)
-  return [`[tool_result] ${name}`, toFormattedString(valueSource)].filter(Boolean).join('\n')
+  const name =
+    firstString(value.name, value.tool_name, value.toolName) || toolName(value)
+  return [`[tool_result] ${name}`, toFormattedString(valueSource)]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function contentText(value: unknown): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return decodeEscapedText(value)
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
 
   if (Array.isArray(value)) {
     return value
@@ -166,7 +193,11 @@ function contentText(value: unknown): string {
     type === 'summary_text'
   ) {
     return contentText(
-      value.text ?? value.value ?? value.data ?? value.text_output ?? value.output_text
+      value.text ??
+        value.value ??
+        value.data ??
+        value.text_output ??
+        value.output_text
     )
   }
 
@@ -174,13 +205,22 @@ function contentText(value: unknown): string {
     return formatToolCallContent(value)
   }
 
-  if (type === 'tool_result' || type === 'function_call_output' || value.role === 'tool') {
+  if (
+    type === 'tool_result' ||
+    type === 'function_call_output' ||
+    value.role === 'tool'
+  ) {
     return formatToolResultContent(value)
   }
 
   if (type === 'reasoning' || type === 'thinking' || value.thinking) {
     const reasoning = contentText(
-      value.text ?? value.reasoning ?? value.thinking ?? value.value ?? value.summary ?? value.content
+      value.text ??
+        value.reasoning ??
+        value.thinking ??
+        value.value ??
+        value.summary ??
+        value.content
     )
     return reasoning ? `[reasoning] ${reasoning}` : ''
   }
@@ -421,8 +461,16 @@ function appendMessagesFromPayload(
   appendChoiceMessages(messages, source, value)
   appendOutputMessages(messages, source, value)
 
-  if (typeof value.output_text === 'string' || typeof value.outputText === 'string') {
-    pushMessage(messages, source, 'assistant', value.output_text ?? value.outputText)
+  if (
+    typeof value.output_text === 'string' ||
+    typeof value.outputText === 'string'
+  ) {
+    pushMessage(
+      messages,
+      source,
+      'assistant',
+      value.output_text ?? value.outputText
+    )
   }
   if (isRecord(value.message)) {
     pushMessageFromRecord(messages, source, value.message, 'assistant')
@@ -443,9 +491,15 @@ function appendMessagesFromPayload(
 
 function toolName(value: unknown): string {
   if (!isRecord(value)) return 'Tool'
-  if (isRecord(value.function)) return stringValue(value.function.name) || 'Tool'
-  if (isRecord(value.functionCall)) return stringValue(value.functionCall.name) || 'Tool'
-  if (isRecord(value.functionResponse)) return stringValue(value.functionResponse.name) || 'Tool'
+  if (isRecord(value.function)) {
+    return stringValue(value.function.name) || 'Tool'
+  }
+  if (isRecord(value.functionCall)) {
+    return stringValue(value.functionCall.name) || 'Tool'
+  }
+  if (isRecord(value.functionResponse)) {
+    return stringValue(value.functionResponse.name) || 'Tool'
+  }
   return firstString(value.name, value.type, value.id) || 'Tool'
 }
 
@@ -488,7 +542,13 @@ function appendToolDefinitions(
   }
 
   if (value.tool_choice) {
-    pushToolEntry(entries, source, 'Tool choice', value.tool_choice, 'tool_choice')
+    pushToolEntry(
+      entries,
+      source,
+      'Tool choice',
+      value.tool_choice,
+      'tool_choice'
+    )
   }
 }
 
@@ -509,19 +569,30 @@ function appendToolCalls(
     }
 
     if (choice.message.function_call) {
-      pushToolEntry(entries, source, 'Function call', choice.message.function_call)
+      pushToolEntry(
+        entries,
+        source,
+        'Function call',
+        choice.message.function_call
+      )
     }
   }
 
   for (const block of asArray(value.content)) {
     if (!isRecord(block)) continue
-    if (block.type === 'tool_use') pushToolEntry(entries, source, 'Tool call', block)
-    if (block.type === 'tool_result') pushToolEntry(entries, source, 'Tool result', block)
+    if (block.type === 'tool_use') {
+      pushToolEntry(entries, source, 'Tool call', block)
+    }
+    if (block.type === 'tool_result') {
+      pushToolEntry(entries, source, 'Tool result', block)
+    }
   }
 
   for (const item of asArray(value.output)) {
     if (!isRecord(item)) continue
-    if (item.type === 'function_call') pushToolEntry(entries, source, 'Function call', item)
+    if (item.type === 'function_call') {
+      pushToolEntry(entries, source, 'Function call', item)
+    }
     if (item.type === 'function_call_output') {
       pushToolEntry(entries, source, 'Tool result', item)
     }
@@ -531,7 +602,9 @@ function appendToolCalls(
     if (!isRecord(candidate) || !isRecord(candidate.content)) continue
     for (const part of asArray(candidate.content.parts)) {
       if (!isRecord(part)) continue
-      if (part.functionCall) pushToolEntry(entries, source, 'Function call', part.functionCall)
+      if (part.functionCall) {
+        pushToolEntry(entries, source, 'Function call', part.functionCall)
+      }
       if (part.functionResponse) {
         pushToolEntry(entries, source, 'Tool result', part.functionResponse)
       }
@@ -560,7 +633,10 @@ function looksLikeStreamObject(value: unknown): boolean {
     )
   }
   if (value.object === 'chat.completion.chunk') return true
-  return Array.isArray(value.choices) && value.choices.some((choice) => isRecord(choice) && isRecord(choice.delta))
+  return (
+    Array.isArray(value.choices) &&
+    value.choices.some((choice) => isRecord(choice) && isRecord(choice.delta))
+  )
 }
 
 function limitStreamObjects(events: unknown[]): unknown[] {
@@ -586,7 +662,8 @@ function streamObjectsFromPayload(payload: ParsedPayload): unknown[] {
   }
 
   if (isRecord(payload.json)) {
-    const nested = payload.json.events ?? payload.json.data ?? payload.json.chunks
+    const nested =
+      payload.json.events ?? payload.json.data ?? payload.json.chunks
     if (Array.isArray(nested) && nested.some(looksLikeStreamObject)) {
       return limitStreamObjects(nested.filter(looksLikeStreamObject))
     }
@@ -603,8 +680,15 @@ function mergeFunctionCallArguments(
 ): unknown {
   if (!isRecord(item)) return item
 
-  const outputIndex = item.output_index ?? item.outputIndex ?? fallbackOutputIndex
-  const id = firstString(item.id, item.item_id, item.itemId, item.tool_call_id, item.toolCallId)
+  const outputIndex =
+    item.output_index ?? item.outputIndex ?? fallbackOutputIndex
+  const id = firstString(
+    item.id,
+    item.item_id,
+    item.itemId,
+    item.tool_call_id,
+    item.toolCallId
+  )
   const keys = [id, `output_index:${outputIndex}`].filter(
     (key): key is string => typeof key === 'string' && key.length > 0
   )
@@ -637,7 +721,13 @@ function mergeFunctionCallArguments(
 }
 
 function getFunctionCallKeys(event: JsonRecord): string[] {
-  const id = firstString(event.item_id, event.itemId, event.id, event.tool_call_id, event.toolCallId)
+  const id = firstString(
+    event.item_id,
+    event.itemId,
+    event.id,
+    event.tool_call_id,
+    event.toolCallId
+  )
   const outputIndex = event.output_index ?? event.outputIndex ?? 0
   return [id, `output_index:${outputIndex}`].filter(
     (key): key is string => typeof key === 'string' && key.length > 0
@@ -674,7 +764,9 @@ function aggregateOpenAiStreamMessages(events: unknown[]): JsonRecord | null {
       if (!isRecord(call)) continue
       const index = typeof call.index === 'number' ? call.index : fallbackIndex
       const existing = toolCalls.get(index) ?? {}
-      const existingFunction = isRecord(existing.function) ? existing.function : {}
+      const existingFunction = isRecord(existing.function)
+        ? existing.function
+        : {}
       const nextFunction = isRecord(call.function) ? call.function : {}
       toolCalls.set(index, {
         ...existing,
@@ -691,19 +783,25 @@ function aggregateOpenAiStreamMessages(events: unknown[]): JsonRecord | null {
   const message: JsonRecord = { role }
   if (content) message.content = content
   if (reasoning.trim()) message.reasoning = reasoning
-  const calls = Array.from(toolCalls.values())
+  const calls = [...toolCalls.values()]
   if (calls.length > 0) message.tool_calls = calls
   return Object.keys(message).length > 1 ? message : null
 }
 
-function aggregateResponsesStreamMessages(events: unknown[]): JsonRecord | null {
+function aggregateResponsesStreamMessages(
+  events: unknown[]
+): JsonRecord | null {
   const textByIndex = new Map<string, string>()
   const outputItemsByIndex = new Map<unknown, JsonRecord>()
   const argumentsByKey = new Map<string, string>()
   let reasoning = ''
   let latestResponse: JsonRecord | null = null
 
-  const appendIndexedText = (outputIndex: unknown, contentIndex: unknown, fragment: unknown) => {
+  const appendIndexedText = (
+    outputIndex: unknown,
+    contentIndex: unknown,
+    fragment: unknown
+  ) => {
     const text = contentText(fragment)
     if (!text) return
     const key = `${outputIndex ?? 0}:${contentIndex ?? 0}`
@@ -712,13 +810,20 @@ function aggregateResponsesStreamMessages(events: unknown[]): JsonRecord | null 
 
   const upsertOutputItem = (outputIndexRaw: unknown, item: unknown) => {
     if (!isRecord(item)) return
-    const outputIndex = outputIndexRaw ?? item.output_index ?? item.outputIndex ?? item.output_item_index ?? item.outputItemIndex
+    const outputIndex =
+      outputIndexRaw ??
+      item.output_index ??
+      item.outputIndex ??
+      item.output_item_index ??
+      item.outputItemIndex
     const indexKey = outputIndex ?? outputItemsByIndex.size
     const existing = outputItemsByIndex.get(indexKey)
     outputItemsByIndex.set(indexKey, {
-      ...(existing ?? {}),
+      ...existing,
       ...item,
-      ...(outputIndex !== undefined && outputIndex !== null ? { output_index: outputIndex } : {}),
+      ...(outputIndex !== undefined && outputIndex !== null
+        ? { output_index: outputIndex }
+        : {}),
     })
   }
 
@@ -727,20 +832,37 @@ function aggregateResponsesStreamMessages(events: unknown[]): JsonRecord | null 
     if (isRecord(event.response)) latestResponse = event.response
 
     const type = stringValue(event.type)
-    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+    if (
+      type === 'response.output_item.added' ||
+      type === 'response.output_item.done'
+    ) {
       upsertOutputItem(
-        event.output_index ?? event.outputIndex ?? (isRecord(event.item) ? event.item.output_index ?? event.item.outputIndex : undefined),
+        event.output_index ??
+          event.outputIndex ??
+          (isRecord(event.item)
+            ? (event.item.output_index ?? event.item.outputIndex)
+            : undefined),
         event.item ?? event.output_item ?? event.outputItem ?? event.output
       )
       continue
     }
 
-    if (type === 'response.function_call_arguments.delta' || type === 'response.tool_call_arguments.delta') {
-      appendFunctionCallArguments(argumentsByKey, event, event.delta ?? event.arguments_delta ?? event.argumentsDelta)
+    if (
+      type === 'response.function_call_arguments.delta' ||
+      type === 'response.tool_call_arguments.delta'
+    ) {
+      appendFunctionCallArguments(
+        argumentsByKey,
+        event,
+        event.delta ?? event.arguments_delta ?? event.argumentsDelta
+      )
       continue
     }
 
-    if (type === 'response.function_call_arguments.done' || type === 'response.tool_call_arguments.done') {
+    if (
+      type === 'response.function_call_arguments.done' ||
+      type === 'response.tool_call_arguments.done'
+    ) {
       for (const key of getFunctionCallKeys(event)) {
         const full = stringValue(event.arguments) ?? stringValue(event.delta)
         if (full !== undefined) argumentsByKey.set(key, full)
@@ -749,27 +871,39 @@ function aggregateResponsesStreamMessages(events: unknown[]): JsonRecord | null 
     }
 
     if (type === 'response.output_text.delta') {
-      appendIndexedText(event.output_index, event.content_index, event.delta ?? event.text ?? event.output_text)
+      appendIndexedText(
+        event.output_index,
+        event.content_index,
+        event.delta ?? event.text ?? event.output_text
+      )
       continue
     }
 
     if (type === 'response.output_text.done') {
-      appendIndexedText(event.output_index, event.content_index, event.text ?? event.output_text ?? event.delta)
+      appendIndexedText(
+        event.output_index,
+        event.content_index,
+        event.text ?? event.output_text ?? event.delta
+      )
       continue
     }
 
     if (type?.includes('reasoning')) {
-      reasoning += contentText(event.delta ?? event.text ?? event.reasoning_text)
+      reasoning += contentText(
+        event.delta ?? event.text ?? event.reasoning_text
+      )
     }
   }
 
-  const mergedText = Array.from(textByIndex.entries())
+  const mergedText = [...textByIndex.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([, value]) => value)
     .join('')
-  const responseOutput = Array.isArray(latestResponse?.output) ? latestResponse.output : []
+  const responseOutput = Array.isArray(latestResponse?.output)
+    ? latestResponse.output
+    : []
   const outputFromResponse = responseOutput.length > 0
-  const outputFromEvents = Array.from(outputItemsByIndex.entries())
+  const outputFromEvents = [...outputItemsByIndex.entries()]
     .sort((a, b) => {
       const left = Number(a[0])
       const right = Number(b[0])
@@ -785,8 +919,10 @@ function aggregateResponsesStreamMessages(events: unknown[]): JsonRecord | null 
   const syntheticOutput =
     patchedOutput.length > 0
       ? []
-      : Array.from(argumentsByKey.entries())
-          .filter(([key, value]) => key.startsWith('output_index:') && value.trim())
+      : [...argumentsByKey.entries()]
+          .filter(
+            ([key, value]) => key.startsWith('output_index:') && value.trim()
+          )
           .map(([key, value]) => ({
             type: 'function_call',
             output_index: Number(key.slice('output_index:'.length)),
@@ -799,13 +935,19 @@ function aggregateResponsesStreamMessages(events: unknown[]): JsonRecord | null 
     return {
       role: stringValue(latestResponse?.role) || 'assistant',
       output,
-      ...(!outputFromResponse && mergedText.trim() ? { content: mergedText } : {}),
+      ...(!outputFromResponse && mergedText.trim()
+        ? { content: mergedText }
+        : {}),
       ...(reasoning.trim() ? { reasoning } : {}),
     }
   }
 
   const fallbackText = contentText(
-    latestResponse?.output_text ?? latestResponse?.outputText ?? latestResponse?.text ?? latestResponse?.content ?? latestResponse?.output_texts
+    latestResponse?.output_text ??
+      latestResponse?.outputText ??
+      latestResponse?.text ??
+      latestResponse?.content ??
+      latestResponse?.output_texts
   )
   if (fallbackText.trim()) {
     return {
@@ -883,7 +1025,10 @@ function aggregateClaudeStreamMessages(events: unknown[]): JsonRecord | null {
         block.text = `${block.text || ''}${stringValue(event.delta.text) || ''}`
       } else if (deltaType === 'thinking_delta') {
         block.reasoning = `${block.reasoning || ''}${stringValue(event.delta.thinking) || ''}`
-      } else if (deltaType === 'input_json_delta' || deltaType === 'tool_use_delta') {
+      } else if (
+        deltaType === 'input_json_delta' ||
+        deltaType === 'tool_use_delta'
+      ) {
         block.partialJson = `${block.partialJson || ''}${stringValue(event.delta.partial_json) || stringValue(event.delta.partialJson) || stringValue(event.delta.arguments) || ''}`
       }
       continue
@@ -908,7 +1053,7 @@ function aggregateClaudeStreamMessages(events: unknown[]): JsonRecord | null {
     }
   }
 
-  const content = Array.from(blocks.entries())
+  const content = [...blocks.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([, block]) => {
       if (block.reasoning) reasoning += block.reasoning
@@ -917,7 +1062,9 @@ function aggregateClaudeStreamMessages(events: unknown[]): JsonRecord | null {
           type: 'tool_use',
           id: block.id,
           name: block.name,
-          input: block.input ?? (block.partialJson?.trim() ? block.partialJson : undefined),
+          input:
+            block.input ??
+            (block.partialJson?.trim() ? block.partialJson : undefined),
         }
       }
       if (block.type === 'tool_result') {
@@ -928,7 +1075,11 @@ function aggregateClaudeStreamMessages(events: unknown[]): JsonRecord | null {
           content: block.content ?? block.text ?? block.input,
         }
       }
-      return { type: block.type || 'text', text: block.text || '', content: block.content }
+      return {
+        type: block.type || 'text',
+        text: block.text || '',
+        content: block.content,
+      }
     })
     .filter((item) => contentText(item).trim())
 
@@ -940,17 +1091,30 @@ function aggregateClaudeStreamMessages(events: unknown[]): JsonRecord | null {
   }
 }
 
-function appendStreamMessages(messages: DetailMessage[], payload: ParsedPayload) {
+function appendStreamMessages(
+  messages: DetailMessage[],
+  payload: ParsedPayload
+) {
   const events = streamObjectsFromPayload(payload)
   if (events.length === 0) return
 
-  const aggregated = events.some((event) => isRecord(event) && Array.isArray(event.choices))
-    ? aggregateOpenAiStreamMessages(events)
-    : events.some((event) => isRecord(event) && stringValue(event.type)?.startsWith('response.'))
-      ? aggregateResponsesStreamMessages(events)
-      : aggregateClaudeStreamMessages(events)
+  let aggregated: JsonRecord | null
+  if (events.some((event) => isRecord(event) && Array.isArray(event.choices))) {
+    aggregated = aggregateOpenAiStreamMessages(events)
+  } else if (
+    events.some(
+      (event) =>
+        isRecord(event) && stringValue(event.type)?.startsWith('response.')
+    )
+  ) {
+    aggregated = aggregateResponsesStreamMessages(events)
+  } else {
+    aggregated = aggregateClaudeStreamMessages(events)
+  }
 
-  if (aggregated) pushMessageFromRecord(messages, 'response', aggregated, 'assistant')
+  if (aggregated) {
+    pushMessageFromRecord(messages, 'response', aggregated, 'assistant')
+  }
 }
 
 function describeStreamEvent(value: unknown): {
@@ -1010,7 +1174,11 @@ function describeStreamEvent(value: unknown): {
     event: stringValue(value.type) || stringValue(value.event),
     role: stringValue(value.role),
     content: contentText(value.text ?? value.content ?? value.delta ?? value),
-    finishReason: firstString(value.finish_reason, value.finishReason, value.stop_reason),
+    finishReason: firstString(
+      value.finish_reason,
+      value.finishReason,
+      value.stop_reason
+    ),
   }
 }
 
@@ -1195,7 +1363,9 @@ export function splitSSE(raw: string | null | undefined): unknown[] {
   return splitConcatenatedJsonObjects(trimmed)
 }
 
-export function extractStreamChunks(payload: ParsedPayload): DetailStreamChunk[] {
+export function extractStreamChunks(
+  payload: ParsedPayload
+): DetailStreamChunk[] {
   return streamObjectsFromPayload(payload).map((event, index) => ({
     id: `stream-${index}`,
     index,
