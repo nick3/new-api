@@ -1,0 +1,1246 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { Check, ChevronDown, Copy, Download, FileText } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { Input } from '@/components/ui/input'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import {
+  formatLogQuota,
+  formatTimestampToDate,
+  formatUseTime,
+} from '@/lib/format'
+import { cn } from '@/lib/utils'
+
+import type { UsageLog } from '../../data/schema'
+import {
+  DETAIL_PREVIEW_BYTES,
+  DETAIL_TRUNCATE_BYTES,
+  extractDetailMessages,
+  extractDetailTools,
+  extractStreamChunks,
+  hasSavedDetail,
+  parsePayload,
+  type DetailMessage,
+  type DetailStreamChunk,
+  type DetailToolEntry,
+  type ParsedPayload,
+} from '../../lib/detail'
+import { parseLogOther } from '../../lib/format'
+import { getLogTypeConfig } from '../../lib/utils'
+
+type UsageLogDetailSheetProps = {
+  log: UsageLog | null
+  open: boolean
+  isAdmin: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+type DetailTab =
+  | 'overview'
+  | 'raw'
+  | 'messages'
+  | 'tools'
+  | 'metrics'
+  | 'stream'
+type CopiedKey = 'request' | 'response' | null
+type MessageViewMode = 'pretty' | 'json'
+
+interface DetailItem {
+  label: string
+  value: string | number | null | undefined
+}
+
+interface SearchResult {
+  count: number
+  firstIndex: number
+}
+
+function formatValue(value: DetailItem['value']): string {
+  if (value === null || value === undefined || value === '') return '-'
+  return String(value)
+}
+
+function hasDetailValue(item: DetailItem): boolean {
+  return item.value !== null && item.value !== undefined && item.value !== ''
+}
+
+function getSearchResult(content: string, query: string): SearchResult {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return { count: 0, firstIndex: -1 }
+
+  const normalizedContent = content.toLowerCase()
+  let count = 0
+  let index = normalizedContent.indexOf(normalizedQuery)
+  const firstIndex = index
+
+  while (index !== -1) {
+    count += 1
+    index = normalizedContent.indexOf(
+      normalizedQuery,
+      index + normalizedQuery.length
+    )
+  }
+
+  return { count, firstIndex }
+}
+
+function highlightSearchMatch(content: string, query: string): ReactNode {
+  const normalizedQuery = query.trim()
+  if (!normalizedQuery) return content
+
+  const index = content.toLowerCase().indexOf(normalizedQuery.toLowerCase())
+  if (index === -1) return content
+
+  return (
+    <>
+      {content.slice(0, index)}
+      <mark className='bg-warning/20 text-foreground rounded px-0.5'>
+        {content.slice(index, index + normalizedQuery.length)}
+      </mark>
+      {content.slice(index + normalizedQuery.length)}
+    </>
+  )
+}
+
+function downloadText(filename: string, text: string) {
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function safeFilename(value: string | null | undefined): string {
+  return (value || 'usage-log')
+    .replaceAll(/[^a-zA-Z0-9._-]+/g, '-')
+    .slice(0, 80)
+}
+
+function DetailGrid({ items }: { items: DetailItem[] }) {
+  return (
+    <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
+      {items.map((item) => (
+        <div key={item.label} className='bg-card/60 rounded-lg border p-3'>
+          <div className='text-muted-foreground text-xs'>{item.label}</div>
+          <div className='mt-1 text-sm font-medium break-words'>
+            {formatValue(item.value)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PayloadPanel({
+  title,
+  payload,
+  copied,
+  downloadName,
+  onCopy,
+}: {
+  title: string
+  payload: ParsedPayload
+  copied: boolean
+  downloadName: string
+  onCopy: () => void
+}) {
+  const { t } = useTranslation()
+  const [search, setSearch] = useState('')
+  const content = payload.formatted
+  const isEmpty = payload.raw.length === 0
+  const searchResult = useMemo(
+    () => getSearchResult(content, search),
+    [content, search]
+  )
+
+  const handleDownload = () => {
+    if (isEmpty) return
+    downloadText(downloadName, payload.raw)
+  }
+
+  return (
+    <section className='bg-card/60 flex min-h-0 max-w-full min-w-0 flex-col overflow-hidden rounded-lg border'>
+      <div className='min-w-0 space-y-3 border-b p-3'>
+        <div className='flex min-w-0 items-center justify-between gap-2'>
+          <div className='min-w-0'>
+            <h3 className='text-sm font-semibold'>{title}</h3>
+            {payload.isTruncated && (
+              <p className='text-muted-foreground mt-1 text-xs'>
+                {t(
+                  'Large content truncated for display. Copy still uses the full content.'
+                )}
+              </p>
+            )}
+          </div>
+          <div className='flex shrink-0 flex-wrap gap-2'>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              disabled={isEmpty}
+              onClick={handleDownload}
+            >
+              <Download className='size-3.5' />
+              {t('Download')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              disabled={isEmpty}
+              onClick={onCopy}
+            >
+              {copied ? (
+                <Check className='size-3.5' />
+              ) : (
+                <Copy className='size-3.5' />
+              )}
+              {t('Copy')}
+            </Button>
+          </div>
+        </div>
+        <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+          <Input
+            value={search}
+            disabled={isEmpty}
+            placeholder={t('Search current preview')}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <span className='text-muted-foreground shrink-0 text-xs'>
+            {search.trim()
+              ? t('{{count}} match(es)', { count: searchResult.count })
+              : t('Search uses the displayed preview only')}
+          </span>
+        </div>
+      </div>
+      <div className='min-h-[220px] min-w-0 flex-1 overflow-x-hidden overflow-y-auto'>
+        <pre className='text-muted-foreground w-full max-w-full min-w-0 p-3 font-mono text-xs leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap'>
+          {isEmpty
+            ? t('No data in this section')
+            : highlightSearchMatch(content, search)}
+        </pre>
+      </div>
+    </section>
+  )
+}
+
+function PayloadPanels({
+  requestPayload,
+  responsePayload,
+  copiedKey,
+  downloadPrefix,
+  onCopy,
+}: {
+  requestPayload: ParsedPayload
+  responsePayload: ParsedPayload
+  copiedKey: CopiedKey
+  downloadPrefix: string
+  onCopy: (key: Exclude<CopiedKey, null>, text: string) => void
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <div className='grid min-h-0 max-w-full min-w-0 gap-4 overflow-hidden'>
+      <PayloadPanel
+        title={t('Request Body')}
+        payload={requestPayload}
+        copied={copiedKey === 'request'}
+        downloadName={`${downloadPrefix}-request.json`}
+        onCopy={() => onCopy('request', requestPayload.raw)}
+      />
+      <PayloadPanel
+        title={t('Response Body')}
+        payload={responsePayload}
+        copied={copiedKey === 'response'}
+        downloadName={`${downloadPrefix}-response.json`}
+        onCopy={() => onCopy('response', responsePayload.raw)}
+      />
+    </div>
+  )
+}
+
+function EmptyTabState({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
+  return (
+    <Empty className='min-h-[260px] border-none'>
+      <EmptyHeader>
+        <EmptyMedia variant='icon'>
+          <FileText className='size-6' />
+        </EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  )
+}
+
+function SectionCard({
+  title,
+  badge,
+  children,
+}: {
+  title: string
+  badge?: string
+  children: ReactNode
+}) {
+  return (
+    <section className='bg-card/60 min-w-0 rounded-lg border'>
+      <div className='flex flex-wrap items-center justify-between gap-2 border-b p-3'>
+        <h3 className='text-sm font-semibold'>{title}</h3>
+        {badge && <Badge variant='outline'>{badge}</Badge>}
+      </div>
+      <div className='p-3'>{children}</div>
+    </section>
+  )
+}
+
+function DetailPre({ value }: { value: string }) {
+  return (
+    <pre className='text-muted-foreground max-w-full font-mono text-xs leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap'>
+      {value}
+    </pre>
+  )
+}
+
+type DetailJsonRecord = Record<string, unknown>
+
+interface ToolParameterInfo {
+  name: string
+  type?: string
+  description?: string
+  required: boolean
+}
+
+interface ToolDisplayInfo {
+  id?: string
+  description?: string
+  parameters: ToolParameterInfo[]
+}
+
+function isDetailRecord(value: unknown): value is DetailJsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function firstDetailString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string')
+}
+
+function parseToolContent(content: string): DetailJsonRecord | null {
+  try {
+    const parsed = JSON.parse(content) as unknown
+    return isDetailRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
+function formatParameterType(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.filter(Boolean).join(' | ')
+  return undefined
+}
+
+function parseArgumentKeys(value: unknown): string[] {
+  if (typeof value === 'string') {
+    const parsed = parseToolContent(value)
+    return parsed ? Object.keys(parsed) : []
+  }
+  if (isDetailRecord(value)) return Object.keys(value)
+  return []
+}
+
+function getToolSchema(record: DetailJsonRecord): DetailJsonRecord | null {
+  const functionRecord = isDetailRecord(record.function)
+    ? record.function
+    : null
+  const candidates = [
+    record.input_schema,
+    record.inputSchema,
+    record.parameters,
+    record.schema,
+    record.parametersJsonSchema,
+    functionRecord?.input_schema,
+    functionRecord?.inputSchema,
+    functionRecord?.parameters,
+  ]
+
+  return candidates.find(isDetailRecord) ?? null
+}
+
+function getToolArgumentKeys(record: DetailJsonRecord): string[] {
+  const functionRecord = isDetailRecord(record.function)
+    ? record.function
+    : null
+  const candidates = [
+    record.arguments,
+    record.input,
+    record.payload,
+    record.input_json,
+    functionRecord?.arguments,
+    functionRecord?.input,
+  ]
+
+  return candidates.flatMap(parseArgumentKeys)
+}
+
+function getToolParameters(record: DetailJsonRecord): ToolParameterInfo[] {
+  const schema = getToolSchema(record)
+  const properties = isDetailRecord(schema?.properties)
+    ? schema.properties
+    : null
+
+  if (properties) {
+    const required = new Set(stringArray(schema?.required))
+    return Object.entries(properties).map(([name, value]) => {
+      const property = isDetailRecord(value) ? value : {}
+      return {
+        name,
+        type: formatParameterType(property.type),
+        description: firstDetailString(property.description, property.title),
+        required: required.has(name),
+      }
+    })
+  }
+
+  return [...new Set(getToolArgumentKeys(record))].map((name) => ({
+    name,
+    required: false,
+  }))
+}
+
+function getToolDisplayInfo(entry: DetailToolEntry): ToolDisplayInfo {
+  const record = parseToolContent(entry.content)
+  if (!record) return { parameters: [] }
+
+  const functionRecord = isDetailRecord(record.function)
+    ? record.function
+    : null
+
+  return {
+    id: firstDetailString(
+      record.id,
+      record.tool_call_id,
+      record.toolCallId,
+      record.tool_use_id,
+      record.toolUseId,
+      record.call_id,
+      record.callId
+    ),
+    description: firstDetailString(
+      record.description,
+      functionRecord?.description
+    ),
+    parameters: getToolParameters(record),
+  }
+}
+
+const messageRoleStyles: Record<
+  string,
+  { text: string; badge: string; active: string }
+> = {
+  assistant: {
+    text: 'text-primary',
+    badge: 'border-transparent bg-primary text-primary-foreground',
+    active: 'bg-primary/10 ring-primary/20',
+  },
+  developer: {
+    text: 'text-accent-foreground',
+    badge: 'border-transparent bg-accent text-accent-foreground',
+    active: 'bg-accent ring-border',
+  },
+  system: {
+    text: 'text-muted-foreground',
+    badge: 'border-transparent bg-muted text-muted-foreground',
+    active: 'bg-muted ring-border',
+  },
+  tool: {
+    text: 'text-foreground',
+    badge: 'border-border bg-background text-foreground',
+    active: 'bg-muted/50 ring-border',
+  },
+  user: {
+    text: 'text-secondary-foreground',
+    badge: 'border-transparent bg-secondary text-secondary-foreground',
+    active: 'bg-secondary ring-border',
+  },
+}
+
+const defaultMessageRoleStyle = {
+  text: 'text-foreground',
+  badge: 'border-transparent bg-muted text-foreground',
+  active: 'bg-muted ring-border',
+}
+
+function formatRoleName(role: string): string {
+  const normalized = role.replaceAll(/[_-]+/g, ' ').trim()
+  if (!normalized) return 'Message'
+  return normalized.replaceAll(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function getMessageRoleStyle(role: string) {
+  const normalizedRole = role.toLowerCase().replaceAll(/[_-].*$/g, '')
+  return messageRoleStyles[normalizedRole] ?? defaultMessageRoleStyle
+}
+
+function getMessagePreview(message: DetailMessage): string {
+  const preview = message.content.replaceAll(/\s+/g, ' ').trim()
+  if (!preview) return '-'
+  return preview.length > 72 ? `${preview.slice(0, 72)}...` : preview
+}
+
+function stringifyMessage(message: DetailMessage): string {
+  return JSON.stringify(
+    {
+      id: message.id,
+      source: message.source,
+      role: message.role,
+      ...(message.name ? { name: message.name } : {}),
+      content: message.content,
+    },
+    null,
+    2
+  )
+}
+
+function MessageListSection({
+  title,
+  messages,
+  currentMessageId,
+  onSelect,
+}: {
+  title: string
+  messages: DetailMessage[]
+  currentMessageId: string
+  onSelect: (message: DetailMessage) => void
+}) {
+  if (messages.length === 0) return null
+
+  return (
+    <section className='min-w-0 space-y-1.5 overflow-hidden'>
+      <div className='flex min-w-0 items-center justify-between gap-2 px-4 py-2.5'>
+        <h3 className='text-muted-foreground min-w-0 truncate text-sm font-medium'>
+          {title}
+        </h3>
+        <Badge
+          variant='secondary'
+          className='h-6 min-w-7 rounded-full border-0 px-2 text-xs'
+        >
+          {messages.length}
+        </Badge>
+      </div>
+      <div className='min-w-0 space-y-0.5 overflow-hidden'>
+        {messages.map((message) => {
+          const roleStyle = getMessageRoleStyle(message.role)
+          const selected = message.id === currentMessageId
+
+          return (
+            <button
+              key={message.id}
+              type='button'
+              aria-pressed={selected}
+              className={cn(
+                'focus-visible:ring-ring box-border block w-full max-w-full min-w-0 overflow-hidden rounded-lg px-4 py-1.5 text-left transition-colors ring-1 ring-transparent focus-visible:ring-2 focus-visible:outline-none',
+                selected ? roleStyle.active : 'hover:bg-background/80'
+              )}
+              onClick={() => onSelect(message)}
+            >
+              <span
+                className={cn(
+                  'block max-w-full min-w-0 truncate text-sm font-medium',
+                  roleStyle.text
+                )}
+              >
+                {message.name
+                  ? `${formatRoleName(message.role)} · ${message.name}`
+                  : formatRoleName(message.role)}
+              </span>
+              <span className='text-muted-foreground mt-0.5 block max-w-full min-w-0 truncate text-xs leading-4'>
+                {getMessagePreview(message)}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function MessagesPanel({ messages }: { messages: DetailMessage[] }) {
+  const { t } = useTranslation()
+  const [selectedMessage, setSelectedMessage] = useState<DetailMessage | null>(
+    null
+  )
+  const [viewMode, setViewMode] = useState<MessageViewMode>('pretty')
+  const { copiedText, copyToClipboard } = useCopyToClipboard()
+
+  const currentMessage = useMemo(
+    () =>
+      (selectedMessage && messages.includes(selectedMessage)
+        ? selectedMessage
+        : messages[0]) ?? null,
+    [messages, selectedMessage]
+  )
+  const requestMessages = useMemo(
+    () => messages.filter((message) => message.source === 'request'),
+    [messages]
+  )
+  const responseMessages = useMemo(
+    () => messages.filter((message) => message.source === 'response'),
+    [messages]
+  )
+  const selectedRoleStyle = currentMessage
+    ? getMessageRoleStyle(currentMessage.role)
+    : defaultMessageRoleStyle
+  const currentMessageJson = useMemo(
+    () => (currentMessage ? stringifyMessage(currentMessage) : ''),
+    [currentMessage]
+  )
+  const selectedContent =
+    viewMode === 'json' ? currentMessageJson : (currentMessage?.content ?? '')
+
+  if (messages.length === 0 || !currentMessage) {
+    return (
+      <EmptyTabState
+        title={t('No parsed messages')}
+        description={t('No chat messages were found in the saved payloads.')}
+      />
+    )
+  }
+
+  const handleCopySelected = () => {
+    void copyToClipboard(selectedContent)
+  }
+
+  return (
+    <div className='bg-background grid h-full min-h-0 overflow-hidden rounded-xl border lg:grid-cols-[220px_minmax(0,1fr)]'>
+      <aside className='bg-muted/35 min-h-0 min-w-0 overflow-hidden border-b p-2 lg:border-r lg:border-b-0'>
+        <div className='h-full max-h-[280px] w-full min-w-0 overflow-x-hidden overflow-y-auto pr-1 lg:max-h-none'>
+          <div className='w-full min-w-0 space-y-6 overflow-hidden pb-2'>
+            <MessageListSection
+              title={t('Request')}
+              messages={requestMessages}
+              currentMessageId={currentMessage.id}
+              onSelect={setSelectedMessage}
+            />
+            <MessageListSection
+              title={t('Response')}
+              messages={responseMessages}
+              currentMessageId={currentMessage.id}
+              onSelect={setSelectedMessage}
+            />
+          </div>
+        </div>
+      </aside>
+
+      <section className='bg-muted/10 flex min-h-0 min-w-0 flex-col'>
+        <div className='flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-3'>
+          <Badge
+            className={cn(
+              'min-w-20 justify-center text-sm font-medium',
+              selectedRoleStyle.badge
+            )}
+          >
+            {formatRoleName(currentMessage.role)}
+          </Badge>
+
+          <div className='flex flex-wrap items-center gap-2'>
+            <div
+              role='group'
+              aria-label={t('View')}
+              className='bg-muted flex rounded-md p-1'
+            >
+              <button
+                type='button'
+                aria-pressed={viewMode === 'pretty'}
+                className={cn(
+                  'focus-visible:ring-ring rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+                  viewMode === 'pretty'
+                    ? 'bg-background text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setViewMode('pretty')}
+              >
+                {t('Formatted')}
+              </button>
+              <button
+                type='button'
+                aria-pressed={viewMode === 'json'}
+                className={cn(
+                  'focus-visible:ring-ring rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+                  viewMode === 'json'
+                    ? 'bg-background text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setViewMode('json')}
+              >
+                {t('JSON')}
+              </button>
+            </div>
+
+            <Button
+              type='button'
+              variant='secondary'
+              size='sm'
+              className='text-primary hover:text-primary/80'
+              onClick={handleCopySelected}
+            >
+              {copiedText === selectedContent ? (
+                <Check className='size-3.5' />
+              ) : (
+                <Copy className='size-3.5' />
+              )}
+              {t('Copy')}
+            </Button>
+          </div>
+        </div>
+
+        <div className='flex min-h-0 flex-1 px-4 pt-2 pb-4'>
+          <Card className='bg-card flex min-h-0 flex-1 flex-col gap-4 border p-4'>
+            <div className='space-y-1.5 pr-4'>
+              <p className='text-foreground text-xs font-medium'>
+                {viewMode === 'json' ? t('JSON') : t('Content')}
+              </p>
+              <div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs'>
+                <span>
+                  {t('Source')}:{' '}
+                  {t(
+                    currentMessage.source === 'request' ? 'Request' : 'Response'
+                  )}
+                </span>
+                <span>
+                  {t('ID')}: {currentMessage.id}
+                </span>
+                {currentMessage.name && (
+                  <span>
+                    {t('Name')}: {currentMessage.name}
+                  </span>
+                )}
+              </div>
+            </div>
+            <ScrollArea className='min-h-0 w-full flex-1'>
+              <DetailPre value={selectedContent} />
+              <ScrollBar orientation='horizontal' />
+            </ScrollArea>
+          </Card>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function ToolsPanel({ entries }: { entries: DetailToolEntry[] }) {
+  const { t } = useTranslation()
+
+  if (entries.length === 0) {
+    return (
+      <EmptyTabState
+        title={t('No parsed tools')}
+        description={t(
+          'No tool definitions or tool calls were found in the saved payloads.'
+        )}
+      />
+    )
+  }
+
+  return (
+    <section className='space-y-3'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <h3 className='text-sm font-semibold'>{t('Tool List')}</h3>
+        <Badge variant='outline' className='border-warning/40 text-warning'>
+          {t('Quantity')}: {entries.length}
+        </Badge>
+      </div>
+      <div className='rounded-lg border'>
+        {entries.map((entry) => {
+          const info = getToolDisplayInfo(entry)
+
+          return (
+            <Collapsible
+              key={entry.id}
+              className='group border-b last:border-b-0'
+            >
+              <CollapsibleTrigger className='hover:bg-muted/40 focus-visible:ring-ring data-[state=open]:bg-muted/50 flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none'>
+                <div className='min-w-0 flex-1 truncate font-medium'>
+                  <span>{entry.name}</span>
+                  {info.id && (
+                    <span className='text-muted-foreground ms-2 text-xs'>
+                      ({info.id})
+                    </span>
+                  )}
+                </div>
+                <Badge
+                  variant='outline'
+                  className='text-muted-foreground shrink-0'
+                >
+                  {t('Parameters')}: {info.parameters.length}
+                </Badge>
+                <ChevronDown className='text-muted-foreground size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180' />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className='space-y-4 px-4 pb-4'>
+                  {info.description && (
+                    <p className='text-sm leading-relaxed'>
+                      {info.description}
+                    </p>
+                  )}
+
+                  {info.parameters.length > 0 && (
+                    <div className='space-y-2'>
+                      {info.parameters.map((parameter) => (
+                        <div
+                          key={parameter.name}
+                          className='grid gap-2 text-sm sm:grid-cols-[220px_minmax(0,1fr)]'
+                        >
+                          <div className='flex min-w-0 flex-wrap items-center gap-2'>
+                            <Badge
+                              variant='outline'
+                              className='text-muted-foreground'
+                            >
+                              {parameter.name}
+                            </Badge>
+                            {parameter.type && (
+                              <Badge variant='secondary'>
+                                {parameter.type}
+                              </Badge>
+                            )}
+                            <Badge
+                              variant='outline'
+                              className={cn(
+                                parameter.required
+                                  ? 'border-warning/40 text-warning'
+                                  : 'text-muted-foreground'
+                              )}
+                            >
+                              {parameter.required
+                                ? t('Required')
+                                : t('Optional')}
+                            </Badge>
+                          </div>
+                          <p className='text-muted-foreground min-w-0 leading-relaxed'>
+                            {parameter.description ||
+                              t('No parameter description')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className='bg-muted/30 rounded-md border p-3'>
+                    <p className='text-foreground mb-2 text-xs font-medium'>
+                      {t('Raw JSON')}
+                    </p>
+                    <DetailPre value={entry.content} />
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function MetricsPanel({ items }: { items: DetailItem[] }) {
+  const { t } = useTranslation()
+  const visibleItems = items.filter(hasDetailValue)
+
+  if (visibleItems.length === 0) {
+    return (
+      <EmptyTabState
+        title={t('No metrics available')}
+        description={t('No additional metrics were found for this record.')}
+      />
+    )
+  }
+
+  return <DetailGrid items={visibleItems} />
+}
+
+function StreamPanel({ chunks }: { chunks: DetailStreamChunk[] }) {
+  const { t } = useTranslation()
+
+  if (chunks.length === 0) {
+    return (
+      <EmptyTabState
+        title={t('No stream chunks')}
+        description={t('No SSE chunks were found in the saved response body.')}
+      />
+    )
+  }
+
+  return (
+    <div className='space-y-3'>
+      {chunks.map((chunk) => (
+        <SectionCard
+          key={chunk.id}
+          title={`${t('Chunk')} #${chunk.index + 1}`}
+          badge={[chunk.event, chunk.role, chunk.finishReason]
+            .filter(Boolean)
+            .join(' · ')}
+        >
+          <div className='space-y-3'>
+            {chunk.content && <DetailPre value={chunk.content} />}
+            <div className='bg-muted/30 rounded-md border p-3'>
+              <DetailPre value={chunk.raw} />
+            </div>
+          </div>
+        </SectionCard>
+      ))}
+    </div>
+  )
+}
+
+function EmptyDetailState() {
+  const { t } = useTranslation()
+
+  return (
+    <Empty className='min-h-[360px] border-none'>
+      <EmptyHeader>
+        <EmptyMedia variant='icon'>
+          <FileText className='size-6' />
+        </EmptyMedia>
+        <EmptyTitle>{t('No saved request details')}</EmptyTitle>
+        <EmptyDescription>
+          {t('This record does not have saved request details.')}
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  )
+}
+
+export function UsageLogDetailSheet({
+  log,
+  open,
+  isAdmin,
+  onOpenChange,
+}: UsageLogDetailSheetProps) {
+  const { t } = useTranslation()
+  const [activeTab, setActiveTab] = useState<DetailTab>('overview')
+  const [copiedKey, setCopiedKey] = useState<CopiedKey>(null)
+  const { copyToClipboard } = useCopyToClipboard()
+
+  const other = useMemo(() => parseLogOther(log?.other ?? ''), [log?.other])
+  const requestPayload = useMemo(
+    () =>
+      parsePayload(
+        log?.detail?.request_body,
+        DETAIL_PREVIEW_BYTES,
+        DETAIL_TRUNCATE_BYTES,
+        { parseJsonWhenTruncated: true }
+      ),
+    [log?.detail?.request_body]
+  )
+  const responsePayload = useMemo(
+    () =>
+      parsePayload(
+        log?.detail?.response_body,
+        DETAIL_PREVIEW_BYTES,
+        DETAIL_TRUNCATE_BYTES
+      ),
+    [log?.detail?.response_body]
+  )
+  const messages = useMemo(
+    () => extractDetailMessages(requestPayload, responsePayload),
+    [requestPayload, responsePayload]
+  )
+  const tools = useMemo(
+    () => extractDetailTools(requestPayload, responsePayload),
+    [requestPayload, responsePayload]
+  )
+  const streamChunks = useMemo(
+    () => extractStreamChunks(responsePayload),
+    [responsePayload]
+  )
+  const typeConfig = getLogTypeConfig(log?.type ?? 0)
+  const hasDetail = log ? hasSavedDetail(log) : false
+  const tokenText = log
+    ? `${log.prompt_tokens.toLocaleString()} / ${log.completion_tokens.toLocaleString()}`
+    : '-'
+  const downloadPrefix = `usage-log-${safeFilename(log?.request_id || String(log?.id ?? 'detail'))}`
+
+  const overviewItems = useMemo<DetailItem[]>(
+    () => [
+      { label: t('Request ID'), value: log?.request_id },
+      { label: t('Upstream Request ID'), value: log?.upstream_request_id },
+      { label: t('Model'), value: log?.model_name },
+      ...(isAdmin
+        ? [
+            {
+              label: t('Channel'),
+              value: log
+                ? `#${log.channel}${log.channel_name ? ` ${log.channel_name}` : ''}`
+                : null,
+            },
+          ]
+        : []),
+      { label: t('Token'), value: log?.token_name },
+      { label: t('Group'), value: log?.group },
+      { label: t('Time'), value: formatTimestampToDate(log?.created_at) },
+      { label: t('Log Type'), value: t(typeConfig.label) },
+      { label: t('Cost'), value: log ? formatLogQuota(log.quota) : null },
+      { label: t('Tokens'), value: tokenText },
+      { label: t('Latency'), value: log ? formatUseTime(log.use_time) : null },
+      { label: t('Path'), value: other?.request_path },
+      {
+        label: t('Retry Chain'),
+        value: other?.request_conversion?.join(' → '),
+      },
+      { label: t('Stream'), value: log?.is_stream ? t('Yes') : t('No') },
+      {
+        label: t('First response time'),
+        value: other?.frt ? formatUseTime(other.frt) : null,
+      },
+      {
+        label: t('Billing Source'),
+        value: other?.billing_source ? t(other.billing_source) : null,
+      },
+    ],
+    [isAdmin, log, other, t, tokenText, typeConfig.label]
+  )
+  const metricItems = useMemo<DetailItem[]>(
+    () => [
+      { label: t('Prompt Tokens'), value: log?.prompt_tokens.toLocaleString() },
+      {
+        label: t('Completion Tokens'),
+        value: log?.completion_tokens.toLocaleString(),
+      },
+      {
+        label: t('Total Tokens'),
+        value: log
+          ? (log.prompt_tokens + log.completion_tokens).toLocaleString()
+          : null,
+      },
+      { label: t('Cost'), value: log ? formatLogQuota(log.quota) : null },
+      { label: t('Latency'), value: log ? formatUseTime(log.use_time) : null },
+      {
+        label: t('First response time'),
+        value: other?.frt ? formatUseTime(other.frt) : null,
+      },
+      {
+        label: t('Billing Source'),
+        value: other?.billing_source ? t(other.billing_source) : null,
+      },
+      {
+        label: t('Billing Mode'),
+        value: other?.billing_mode ? t(other.billing_mode) : null,
+      },
+      { label: t('Matched Tier'), value: other?.matched_tier },
+      { label: t('Model Ratio'), value: other?.model_ratio },
+      { label: t('Completion Ratio'), value: other?.completion_ratio },
+      { label: t('Group Ratio'), value: other?.group_ratio },
+      { label: t('User Group Ratio'), value: other?.user_group_ratio },
+      { label: t('Cache Tokens'), value: other?.cache_tokens },
+      {
+        label: t('Cache Creation Tokens'),
+        value: other?.cache_creation_tokens,
+      },
+      {
+        label: t('Audio Input Tokens'),
+        value: other?.audio_input ?? other?.audio_input_token_count,
+      },
+      { label: t('Audio Output Tokens'), value: other?.audio_output },
+      { label: t('Text Input Tokens'), value: other?.text_input },
+      { label: t('Text Output Tokens'), value: other?.text_output },
+      { label: t('Image Output Tokens'), value: other?.image_output },
+      { label: t('Web Search Calls'), value: other?.web_search_call_count },
+      { label: t('File Search Calls'), value: other?.file_search_call_count },
+      {
+        label: t('Image Generation Calls'),
+        value: other?.image_generation_call ? t('Yes') : null,
+      },
+      { label: t('Request Path'), value: other?.request_path },
+      {
+        label: t('Retry Chain'),
+        value: other?.request_conversion?.join(' → '),
+      },
+      { label: t('Upstream Model'), value: other?.upstream_model_name },
+      ...(isAdmin
+        ? [
+            { label: t('IP'), value: log?.ip },
+            { label: t('Stream Status'), value: other?.stream_status?.status },
+            {
+              label: t('Stream End Reason'),
+              value: other?.stream_status?.end_reason,
+            },
+            {
+              label: t('Stream Error Count'),
+              value: other?.stream_status?.error_count,
+            },
+            {
+              label: t('Stream End Error'),
+              value: other?.stream_status?.end_error,
+            },
+            { label: t('Reject Reason'), value: other?.reject_reason },
+          ]
+        : []),
+    ],
+    [isAdmin, log, other, t]
+  )
+
+  const handleCopy = async (key: Exclude<CopiedKey, null>, text: string) => {
+    const copied = await copyToClipboard(text)
+    setCopiedKey(copied ? key : null)
+  }
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setActiveTab('overview')
+      setCopiedKey(null)
+    }
+    onOpenChange(nextOpen)
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={handleOpenChange}>
+      <SheetContent className='w-screen max-w-none gap-0 p-0 sm:w-[min(960px,92vw)] sm:max-w-none'>
+        <SheetHeader className='border-b px-4 py-4 sm:px-6'>
+          <div className='flex flex-wrap items-start justify-between gap-3 pe-8'>
+            <div className='min-w-0 space-y-2'>
+              <SheetTitle className='flex flex-wrap items-center gap-2 text-lg'>
+                {t('Request Details')}
+                <Badge variant='outline'>{t(typeConfig.label)}</Badge>
+              </SheetTitle>
+              <SheetDescription className='flex flex-wrap gap-x-3 gap-y-1 text-xs'>
+                <span>
+                  {t('Request ID')}: {formatValue(log?.request_id)}
+                </span>
+                <span>
+                  {t('Model')}: {formatValue(log?.model_name)}
+                </span>
+                <span>
+                  {t('Token')}: {formatValue(log?.token_name)}
+                </span>
+              </SheetDescription>
+            </div>
+          </div>
+        </SheetHeader>
+
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as DetailTab)}
+          className='min-h-0 flex-1 gap-0'
+        >
+          <div className='border-b px-4 py-2 sm:px-6'>
+            <ScrollArea className='w-full'>
+              <TabsList className='w-max justify-start'>
+                <TabsTrigger value='overview'>{t('Overview')}</TabsTrigger>
+                <TabsTrigger value='messages'>{t('Messages')}</TabsTrigger>
+                <TabsTrigger value='tools'>{t('Tools')}</TabsTrigger>
+                <TabsTrigger value='metrics'>{t('Metrics')}</TabsTrigger>
+                <TabsTrigger value='stream'>{t('Stream')}</TabsTrigger>
+                <TabsTrigger value='raw'>{t('Raw')}</TabsTrigger>
+              </TabsList>
+              <ScrollBar orientation='horizontal' />
+            </ScrollArea>
+          </div>
+
+          <div className='min-h-0 flex-1 overflow-hidden p-4 sm:p-6'>
+            {!hasDetail ? (
+              <ScrollArea className='h-full'>
+                <EmptyDetailState />
+              </ScrollArea>
+            ) : (
+              <>
+                <TabsContent value='overview' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
+                    <DetailGrid items={overviewItems} />
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value='messages' className='mt-0 h-full min-h-0'>
+                  <MessagesPanel messages={messages} />
+                </TabsContent>
+
+                <TabsContent value='tools' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
+                    <ToolsPanel entries={tools} />
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value='metrics' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
+                    <MetricsPanel items={metricItems} />
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value='stream' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
+                    <StreamPanel chunks={streamChunks} />
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value='raw' className='mt-0 h-full min-h-0'>
+                  <ScrollArea className='h-full'>
+                    <PayloadPanels
+                      requestPayload={requestPayload}
+                      responsePayload={responsePayload}
+                      copiedKey={copiedKey}
+                      downloadPrefix={downloadPrefix}
+                      onCopy={handleCopy}
+                    />
+                  </ScrollArea>
+                </TabsContent>
+              </>
+            )}
+          </div>
+        </Tabs>
+      </SheetContent>
+    </Sheet>
+  )
+}
