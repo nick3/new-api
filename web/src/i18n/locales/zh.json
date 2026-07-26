@@ -2096,7 +2096,7 @@
     "Format: APIKey-AppId, e.g., fastgpt-0sp2gtvfdgyi4k30jwlgwf1i-64f335d84283f05518e9e041": "格式：APIKey-AppId，例如：fastgpt-0sp2gtvfdgyi4k30jwlgwf1i-64f335d84283f05518e9e041",
     "Format: APIKey|SecretKey": "格式：APIKey|SecretKey",
     "Format: APPID|APISecret|APIKey": "格式：APPID|APISecret|APIKey",
-    "Format: AppId|SecretId|SecretKey": "格式：AppId|SecretId|SecretKey",
+    "Format: TokenHub API Key, or legacy AppId|SecretId|SecretKey": "格式：TokenHub API Key，或旧版 AppId|SecretId|SecretKey",
     "Formatted": "格式化",
     "Forward downstream request headers to the upstream, excluding credentials and connection-specific headers.": "将下游请求头转发至上游，并排除认证凭据和连接专用请求头。",
     "Forward requests directly to upstream providers without any post-processing.": "将请求直接转发给上游提供商，不进行任何后处理。",

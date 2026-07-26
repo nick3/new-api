@@ -2096,7 +2096,7 @@
     "Format: APIKey-AppId, e.g., fastgpt-0sp2gtvfdgyi4k30jwlgwf1i-64f335d84283f05518e9e041": "形式: APIKey-AppId、例: fastgpt-0sp2gtvfdgyi4k30jwlgwf1i-64f335d84283f05518e9e041",
     "Format: APIKey|SecretKey": "形式: APIKey|SecretKey",
     "Format: APPID|APISecret|APIKey": "形式: APPID|APISecret|APIKey",
-    "Format: AppId|SecretId|SecretKey": "形式: AppId|SecretId|SecretKey",
+    "Format: TokenHub API Key, or legacy AppId|SecretId|SecretKey": "形式: TokenHub API Key、または旧形式の AppId|SecretId|SecretKey",
     "Formatted": "整形済み",
     "Forward downstream request headers to the upstream, excluding credentials and connection-specific headers.": "下流のリクエストヘッダーを上流へ転送します。認証情報と接続固有のヘッダーは除外されます。",
     "Forward requests directly to upstream providers without any post-processing.": "ポストプロセスなしで、リクエストをアップストリームプロバイダーに直接転送します。",
