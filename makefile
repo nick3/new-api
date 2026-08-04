@@ -8,7 +8,7 @@ DEV_POSTGRES_DB = new-api
 DEV_POSTGRES_USER = root
 DEV_SQLITE_PATH ?= one-api.db
 
-.PHONY: all build-web build-all-web build-frontend build-all-frontends start-api start-backend dev dev-api dev-api-rebuild dev-web dev-frontend dev-backend stop reset-setup
+.PHONY: all build-web build-all-web build-frontend build-all-frontends start-api start-backend dev dev-api dev-api-rebuild dev-web dev-frontend dev-backend stop reset-setup test
 
 all: build-all-web start-api
 
@@ -61,6 +61,15 @@ stop:
 	@pkill -f "go run main.go" 2>/dev/null || echo "No api running"
 	@pkill -f "vite" 2>/dev/null || echo "No web dev server running"
 	@echo "All services stopped"
+
+# The main package embeds the ignored web/dist output and is covered after build-web.
+test:
+	@echo "Testing root Go module..."
+	@root_module=$$(GOWORK=off go list -m); \
+		root_packages=$$(GOWORK=off go list -e ./... | grep -vxF "$$root_module"); \
+		GOWORK=off go test $$root_packages
+	@echo "Testing relaykit Go module..."
+	@cd relaykit && GOWORK=off go test ./...
 
 reset-setup:
 	@echo "Resetting local setup wizard state..."
