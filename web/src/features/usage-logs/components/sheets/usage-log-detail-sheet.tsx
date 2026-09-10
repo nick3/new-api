@@ -1126,7 +1126,10 @@ export function UsageLogDetailSheet({
               label: t('Stream End Error'),
               value: other?.stream_status?.end_error,
             },
-            { label: t('Reject Reason'), value: other?.reject_reason },
+            {
+              label: t('Reject Reason'),
+              value: other?.admin_info?.reject_reason,
+            },
           ]
         : []),
     ],
