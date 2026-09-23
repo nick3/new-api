@@ -156,7 +156,7 @@ afterEach(() => {
 })
 
 test.each([{ enabledPlans: [] }, { enabledPlans: [false] }])(
-  'hides both source icons in admin view when no plan is enabled ($enabledPlans)',
+  'hides the wallet icon in admin view when no plan is enabled but keeps the subscription marker ($enabledPlans)',
   async ({ enabledPlans }) => {
     await renderLogs({
       role: ROLE.ADMIN,
@@ -167,9 +167,7 @@ test.each([{ enabledPlans: [] }, { enabledPlans: [false] }])(
     expect(
       screen.queryByRole('img', { name: 'Wallet' })
     ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('img', { name: 'Subscription' })
-    ).not.toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
   }
 )
 
@@ -184,7 +182,7 @@ test('shows both source icons in admin view when any system plan is enabled', as
   expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
 })
 
-test('hides both source icons for a user with only expired subscriptions', async () => {
+test('keeps the subscription marker on a subscription-billed log for a user with only expired subscriptions', async () => {
   await renderLogs({
     role: ROLE.USER,
     enabledPlans: [true],
@@ -192,9 +190,7 @@ test('hides both source icons for a user with only expired subscriptions', async
   })
 
   expect(screen.queryByRole('img', { name: 'Wallet' })).not.toBeInTheDocument()
-  expect(
-    screen.queryByRole('img', { name: 'Subscription' })
-  ).not.toBeInTheDocument()
+  expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
 })
 
 test('shows both source icons for a user with an active subscription', async () => {
@@ -220,9 +216,7 @@ test('uses personal subscriptions when an admin switches to only-self view', asy
   await user.click(screen.getByRole('button', { name: 'Switch scope' }))
   await waitFor(() => expect(client.isFetching()).toBe(0))
   expect(screen.queryByRole('img', { name: 'Wallet' })).not.toBeInTheDocument()
-  expect(
-    screen.queryByRole('img', { name: 'Subscription' })
-  ).not.toBeInTheDocument()
+  expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
 
   await user.click(screen.getByRole('button', { name: 'Switch scope' }))
   expect(await screen.findByRole('img', { name: 'Wallet' })).toBeVisible()

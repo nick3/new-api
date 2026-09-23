@@ -86,6 +86,26 @@ function DetailPreview(props: { other: LogOtherData; isAdmin: boolean }) {
   if (!cell) throw new Error('The log must have a content column')
   return flexRender(cell.column.columnDef.cell, cell.getContext())
 }
+
+function RequestDetailAction(props: {
+  log: UsageLog
+  onOpenDetail: (log: UsageLog) => void
+}) {
+  const table = useReactTable({
+    data: [props.log],
+    columns: useCommonLogsColumns(false, false, false, {
+      onOpenDetail: props.onOpenDetail,
+    }),
+    getCoreRowModel: getCoreRowModel(),
+  })
+  const cell = table
+    .getRowModel()
+    .rows[0].getAllCells()
+    .find((item) => item.column.id === 'actions')
+  if (!cell) throw new Error('The log must have an actions column')
+  return flexRender(cell.column.columnDef.cell, cell.getContext())
+}
+
 const plugin = {
   key: 'incho',
   name: 'Incho',
@@ -126,6 +146,48 @@ function renderPreview(other: LogOtherData, isAdmin = true) {
   )
   return screen.getByRole('button', { name: /./ })
 }
+
+test('keeps log details open when the parent refreshes with unchanged data', async () => {
+  const other = { model_price: 0.25 }
+  const wrapper = ({ children }: { children: React.ReactNode }) => (
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    </I18nextProvider>
+  )
+  const { rerender } = render(<DetailPreview other={other} isAdmin />, {
+    wrapper,
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Per-call · $0.25' }))
+  expect(await screen.findByRole('dialog')).toBeVisible()
+  rerender(<DetailPreview other={other} isAdmin />)
+  expect(screen.getByRole('dialog')).toBeVisible()
+})
+
+test('request details use the current callback after the parent changes it', () => {
+  const log: UsageLog = {
+    ...makeLog({}),
+    detail: {
+      log_id: 1,
+      request_body: '{"model":"gpt-5"}',
+      response_body: null,
+    },
+  }
+  const previous = vi.fn()
+  const current = vi.fn()
+  const wrapper = ({ children }: { children: React.ReactNode }) => (
+    <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
+  )
+  const { rerender } = render(
+    <RequestDetailAction log={log} onOpenDetail={previous} />,
+    { wrapper }
+  )
+
+  rerender(<RequestDetailAction log={log} onOpenDetail={current} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Request Details' }))
+
+  expect(current).toHaveBeenCalledWith(log)
+  expect(previous).not.toHaveBeenCalled()
+})
 
 test.each([
   {

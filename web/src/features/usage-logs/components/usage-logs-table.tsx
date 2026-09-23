@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -88,6 +88,10 @@ interface UsageLogsTableProps {
 
 export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const { t } = useTranslation()
+  const getColumnClassName = useCallback(
+    () => (logCategory === 'common' ? 'py-2' : 'py-3.5'),
+    [logCategory]
+  )
   const {
     isAdminView: isAdmin,
     isRootView: isRoot,
@@ -201,17 +205,16 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const logs = data?.items || []
+  const handleOpenDetail = useCallback((log: UsageLog) => {
+    setSelectedLogDetail(log)
+    setDetailSheetOpen(true)
+  }, [])
   const columns = useColumnsByCategory(
     logCategory,
     isAdmin,
     isRoot,
     showBillingSource,
-    {
-      onOpenDetail: (log) => {
-        setSelectedLogDetail(log)
-        setDetailSheetOpen(true)
-      },
-    }
+    { onOpenDetail: handleOpenDetail }
   )
   const isLoadingData = isLoading || (isFetching && !data)
 
@@ -293,7 +296,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
               key={row.id}
               row={row}
               className={cn('transition-colors', tintClass)}
-              getColumnClassName={() => (isCommon ? 'py-2' : 'py-3.5')}
+              getColumnClassName={getColumnClassName}
+              cellRenderColumns={table.options.columns}
             />
           )
         }}
