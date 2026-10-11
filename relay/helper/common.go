@@ -66,7 +66,7 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 
 	jsonData, err := common.Marshal(resp)
 	if err != nil {
-		common.SysError("error marshalling stream response: " + err.Error())
+		common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
 	} else {
 		common.AppendPayloadChunkForLog(c, constant.ContextKeyLoggedResponseBody, string(jsonData))
 		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
@@ -143,7 +143,7 @@ func Done(c *gin.Context) {
 
 func WssString(c *gin.Context, ws *websocket.Conn, str string) error {
 	if ws == nil {
-		logger.LogError(c, "websocket connection is nil")
+		logger.LogError(c, common.LogText("websocket connection is nil"))
 		return errors.New("websocket connection is nil")
 	}
 	//common.LogInfo(c, fmt.Sprintf("sending message: %s", str))
@@ -156,7 +156,7 @@ func WssObject(c *gin.Context, ws *websocket.Conn, object any) error {
 		return fmt.Errorf("error marshalling object: %w", err)
 	}
 	if ws == nil {
-		logger.LogError(c, "websocket connection is nil")
+		logger.LogError(c, common.LogText("websocket connection is nil"))
 		return errors.New("websocket connection is nil")
 	}
 	//common.LogInfo(c, fmt.Sprintf("sending message: %s", jsonData))

@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,20 +39,30 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 				initCol()
 			})
 			common.SQLitePath = filepath.Join(t.TempDir(), "main.db")
-			t.Setenv("MERGE_TEST_SQL_DSN", "local")
+			mainDSN := os.Getenv("MERGE_TEST_MAIN_DSN")
+			if mainDSN == "" {
+				mainDSN = "local"
+			}
+			t.Setenv("MERGE_TEST_SQL_DSN", mainDSN)
 			var err error
-			DB, _, err = chooseDB("MERGE_TEST_SQL_DSN", false)
+			var mainType common.DatabaseType
+			DB, mainType, err = chooseDB("MERGE_TEST_SQL_DSN", false)
 			require.NoError(t, err)
 			sqlDB, err := DB.DB()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-			common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+			common.SetMainDatabaseType(mainType)
 			common.IsMasterNode = true
 			common.LogConsumeEnabled, common.DataExportEnabled = true, false
 			t.Setenv("LOG_SQL_DSN", "")
 			if separate {
 				common.SQLitePath = filepath.Join(t.TempDir(), "logs.db")
-				t.Setenv("LOG_SQL_DSN", "local")
+				logDSN := "local"
+				if mainType != common.DatabaseTypeSQLite {
+					logDSN = os.Getenv("MERGE_TEST_LOG_DSN")
+					require.NotEmpty(t, logDSN, "external tests require a dedicated log database")
+				}
+				t.Setenv("LOG_SQL_DSN", logDSN)
 			}
 			require.NoError(t, InitLogDB())
 			logDB := LOG_DB
@@ -62,8 +73,12 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 				assert.False(t, DB.Migrator().HasTable(&LogDetail{}))
 			}
 			var version string
-			require.NoError(t, logDB.Raw("SELECT sqlite_version()").Scan(&version).Error)
-			t.Logf("SQLite %s, %s log database", version, name)
+			versionQuery := "SELECT VERSION()"
+			if mainType == common.DatabaseTypeSQLite {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			require.NoError(t, logDB.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("%s %s, %s log database", mainType, version, name)
 			assert.True(t, logDB.Migrator().HasTable(&AuditLog{}))
 			assert.True(t, logDB.Migrator().HasIndex(&LogDetail{}, "idx_log_details_created_at"))
 
@@ -78,11 +93,16 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 			request, response := `{"input":"hello"}`, `{"output":"world"}`
 			RecordConsumeLog(c, 42, RecordConsumeLogParams{
 				TokenId: 11, Other: other, Quota: 123,
+				Content:            []*common.Message{common.NewMessage("Model test")},
 				RequestBodyPreview: request, ResponseBodyPreview: response,
 			})
 			common.CapturePayloadStringForLog(c, constant.ContextKeyLoggedRequestBody, request)
 			common.CapturePayloadStringForLog(c, constant.ContextKeyLoggedResponseBody, response)
-			RecordErrorLog(c, 42, 1, "test", "", "rejected", 11, 1, false, "default", other)
+			errorOther := NewLogOther()
+			require.True(t, errorOther.SetPublic("model_price", 1.25))
+			require.True(t, errorOther.SetAdmin("reject_reason", "policy rejection"))
+			require.True(t, errorOther.SetRoot("node_name", "private-node"))
+			RecordErrorLog(c, 42, 1, "test", "", "Request rejected", 11, 1, false, "default", errorOther)
 			for range 2 {
 				require.NoError(t, migrateLOGDB())
 			}
@@ -90,10 +110,16 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 			require.NoError(t, logDB.Order("id").Find(&stored).Error)
 			require.Len(t, stored, 2)
 			assert.Equal(t, 123, stored[0].Quota)
+			assert.Equal(t, "Model test", stored[0].Content)
+			assert.Equal(t, "Request rejected", stored[1].Content)
 			attachLogDetails(stored)
 			for _, entry := range stored {
 				assert.Equal(t, "192.0.2.1", entry.Ip)
-				assert.JSONEq(t, other.JSONString(), entry.Other)
+				wantOther := other.JSONString()
+				if entry.Type == LogTypeError {
+					wantOther = errorOther.JSONString()
+				}
+				assert.JSONEq(t, wantOther, entry.Other)
 				require.NotNil(t, entry.Detail)
 				assert.Equal(t, LargeText(request), entry.Detail.RequestBody)
 				assert.Equal(t, LargeText(response), entry.Detail.ResponseBody)
@@ -103,7 +129,11 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 			require.Len(t, userLogs, 2)
 			for _, entry := range userLogs {
 				require.NotNil(t, entry.Detail)
-				assert.JSONEq(t, `{"model_price":1.25}`, entry.Other)
+				wantOther := `{"model_price":1.25}`
+				if entry.Type == LogTypeConsume {
+					wantOther = `{"model_price":1.25,"content_parts":[{"key":"Model test"}]}`
+				}
+				assert.JSONEq(t, wantOther, entry.Other)
 			}
 			require.Error(t, logDB.Create(stored[0].Detail).Error, "detail primary key must survive repeated migration")
 			require.NoError(t, logDB.Create(&AuditLog{EventId: "retained-audit", CreatedAt: 1}).Error)
