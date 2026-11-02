@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -96,6 +97,8 @@ type Log struct {
 	UpstreamRequestId string     `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
 	Other             string     `json:"other"`
 	Detail            *LogDetail `json:"detail,omitempty" gorm:"-"`
+	DetailId          int        `json:"detail_id,omitempty" gorm:"-"`
+	HasDetail         bool       `json:"has_detail" gorm:"-"`
 }
 
 type LogDetail struct {
@@ -167,12 +170,21 @@ func FormatRootLogs(logs []*Log) {
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
+	return GetLogByTokenIdWithContext(context.Background(), tokenId)
+}
+
+func GetLogByTokenIdWithContext(ctx context.Context, tokenId int) (logs []*Log, err error) {
 	order := "id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("")
 	}
-	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
-	attachLogDetails(logs)
+	err = LOG_DB.WithContext(ctx).Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
+	if err != nil {
+		return nil, err
+	}
+	if err = attachLogDetailMetadata(ctx, logs); err != nil {
+		return nil, err
+	}
 	formatUserLogs(logs, 0)
 	return logs, err
 }
@@ -497,36 +509,42 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func attachLogDetails(logs []*Log) {
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		return
-	}
-	if len(logs) == 0 {
-		return
+// attachLogDetailMetadata reads only primary keys, never the saved payloads.
+// DetailId is assigned before user-visible IDs become display row numbers.
+func attachLogDetailMetadata(ctx context.Context, logs []*Log) error {
+	if len(logs) == 0 || common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return nil
 	}
 	ids := make([]int, 0, len(logs))
 	for _, log := range logs {
 		if log != nil {
+			log.DetailId = log.Id
 			ids = append(ids, log.Id)
 		}
 	}
 	if len(ids) == 0 {
-		return
+		return nil
 	}
-	detailsMap, err := GetLogDetailsByIDs(ids)
-	if err != nil {
-		// silently ignore; detail retrieval failure should not break log listing
-		logger.LogError(context.Background(), "failed to load log details: "+err.Error())
-		return
+	var savedIDs []int
+	if err := LOG_DB.WithContext(ctx).Model(&LogDetail{}).
+		Where("log_id IN ?", ids).Pluck("log_id", &savedIDs).Error; err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// Keep summaries available when the optional detail store is unavailable.
+		logger.LogError(ctx, common.LogText("failed to load log detail metadata: %s", err.Error()))
+		return nil
+	}
+	saved := make(map[int]bool, len(savedIDs))
+	for _, id := range savedIDs {
+		saved[id] = true
 	}
 	for _, log := range logs {
-		if log == nil {
-			continue
-		}
-		if detail, ok := detailsMap[log.Id]; ok {
-			log.Detail = detail
+		if log != nil {
+			log.HasDetail = saved[log.Id]
 		}
 	}
+	return nil
 }
 
 func resolveLogPayloads(c *gin.Context, requestPreview string, responsePreview string) (string, string) {
@@ -639,7 +657,16 @@ func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 }
 
 func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
-	tx, err := filter.apply(LOG_DB)
+	return GetAllLogsWithContext(context.Background(), filter, startIdx, num)
+}
+
+func GetAllLogsWithContext(ctx context.Context, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
+	startIdx = max(startIdx, 0)
+	if num <= 0 {
+		num = common.ItemsPerPage
+	}
+	num = min(num, 100)
+	tx, err := filter.apply(LOG_DB.WithContext(ctx))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -655,7 +682,9 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 	if err != nil {
 		return nil, 0, err
 	}
-	attachLogDetails(logs)
+	if err = attachLogDetailMetadata(ctx, logs); err != nil {
+		return nil, 0, err
+	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		assignDisplayLogIds(logs, startIdx)
 	}
@@ -687,7 +716,7 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 			}
 		} else {
 			// Bulk query channels from DB
-			if err = DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
+			if err = DB.WithContext(ctx).Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
 				return logs, total, err
 			}
 		}
@@ -703,15 +732,25 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 	return logs, total, err
 }
 
-const logSearchCountLimit = 10000
-
 func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
-	tx, err := filter.apply(LOG_DB.Where("logs.user_id = ?", userId))
+	return GetUserLogsWithContext(context.Background(), userId, filter, startIdx, num)
+}
+
+func GetUserLogsWithContext(ctx context.Context, userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
+	startIdx = max(startIdx, 0)
+	if num <= 0 {
+		num = common.ItemsPerPage
+	}
+	num = min(num, 100)
+	tx, err := filter.apply(LOG_DB.WithContext(ctx).Where("logs.user_id = ?", userId))
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
+	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, 0, ctx.Err()
+		}
 		common.SysError(common.LogText("failed to count user logs: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to query logs")
 	}
@@ -721,11 +760,16 @@ func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*L
 	}
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, 0, ctx.Err()
+		}
 		common.SysError(common.LogText("failed to search user logs: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to query logs")
 	}
 
-	attachLogDetails(logs)
+	if err = attachLogDetailMetadata(ctx, logs); err != nil {
+		return nil, 0, err
+	}
 	formatUserLogs(logs, startIdx)
 	return logs, total, err
 }
@@ -743,6 +787,45 @@ func GetLogDetailsByIDs(ids []int) (map[int]*LogDetail, error) {
 		result[detail.LogId] = detail
 	}
 	return result, nil
+}
+
+type LogDetailScope struct {
+	UserId  int
+	TokenId int
+	Admin   bool
+}
+
+// GetLogDetail authorizes against the summary before reading a saved body.
+// A missing/expired body is nil; an inaccessible summary is ErrRecordNotFound.
+func GetLogDetail(ctx context.Context, logId int, scope LogDetailScope) (*LogDetail, error) {
+	if logId <= 0 || common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	query := LOG_DB.WithContext(ctx).Model(&Log{}).Select("id").Where("id = ?", logId)
+	if scope.TokenId > 0 {
+		if scope.UserId <= 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		query = query.Where("user_id = ? AND token_id = ?", scope.UserId, scope.TokenId)
+	} else if !scope.Admin {
+		if scope.UserId <= 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		query = query.Where("user_id = ?", scope.UserId)
+	}
+	var log Log
+	if err := query.Take(&log).Error; err != nil {
+		return nil, err
+	}
+	var detail LogDetail
+	err := LOG_DB.WithContext(ctx).Where("log_id = ?", logId).Take(&detail).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &detail, nil
 }
 
 // StreamAllLogs calls fn with each log matching filter, newest first, as an
@@ -938,7 +1021,21 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 		return total, nil
 	}
 
-	result := LOG_DB.WithContext(ctx).Where("created_at < ?", targetTimestamp).Limit(limit).Delete(&Log{})
+	// Select keys first: GORM's DELETE ignores Limit on PostgreSQL and SQLite.
+	// Recheck the cutoff on DELETE as well, without a same-table LIMIT subquery.
+	batchCtx, cancel := context.WithTimeout(ctx, logCleanupBatchTimeout)
+	defer cancel()
+	limit = min(limit, 1000)
+	var ids []int
+	if err := LOG_DB.WithContext(batchCtx).Model(&Log{}).
+		Where("created_at < ?", targetTimestamp).
+		Order("created_at ASC, id ASC").Limit(limit).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := LOG_DB.WithContext(batchCtx).Where("id IN ? AND created_at < ?", ids, targetTimestamp).Delete(&Log{})
 	if nil != result.Error {
 		return 0, result.Error
 	}

@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
@@ -64,13 +66,19 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 				}
 				t.Setenv("LOG_SQL_DSN", logDSN)
 			}
+			hadMainDetails := DB.Migrator().HasTable(&LogDetail{})
 			require.NoError(t, InitLogDB())
+			require.NoError(t, DB.AutoMigrate(&SystemTaskLock{}))
+			require.NoError(t, DB.Where("type = ?", logDetailCleanupLockType).Delete(&SystemTaskLock{}).Error)
+			for _, table := range []any{&Log{}, &LogDetail{}, &AuditLog{}} {
+				require.NoError(t, LOG_DB.Where("1 = 1").Delete(table).Error)
+			}
 			logDB := LOG_DB
 			if separate {
 				logSQLDB, err := logDB.DB()
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, logSQLDB.Close()) })
-				assert.False(t, DB.Migrator().HasTable(&LogDetail{}))
+				assert.Equal(t, hadMainDetails, DB.Migrator().HasTable(&LogDetail{}), "external log migration must not create tables in the main database")
 			}
 			var version string
 			versionQuery := "SELECT VERSION()"
@@ -112,7 +120,11 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 			assert.Equal(t, 123, stored[0].Quota)
 			assert.Equal(t, "Model test", stored[0].Content)
 			assert.Equal(t, "Request rejected", stored[1].Content)
-			attachLogDetails(stored)
+			savedDetails, err := GetLogDetailsByIDs([]int{stored[0].Id, stored[1].Id})
+			require.NoError(t, err)
+			for _, entry := range stored {
+				entry.Detail = savedDetails[entry.Id]
+			}
 			for _, entry := range stored {
 				assert.Equal(t, "192.0.2.1", entry.Ip)
 				wantOther := other.JSONString()
@@ -129,14 +141,16 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 			require.NoError(t, err)
 			require.EqualValues(t, 1, total)
 			require.Len(t, allLogs, 1)
-			require.NotNil(t, allLogs[0].Detail)
-			assert.Equal(t, LargeText(request), allLogs[0].Detail.RequestBody)
+			assert.Nil(t, allLogs[0].Detail)
+			assert.True(t, allLogs[0].HasDetail)
+			assert.Equal(t, stored[0].Id, allLogs[0].DetailId)
 			filteredUserLogs, total, err := GetUserLogs(42, filter, 0, 10)
 			require.NoError(t, err)
 			require.EqualValues(t, 1, total)
 			require.Len(t, filteredUserLogs, 1)
-			require.NotNil(t, filteredUserLogs[0].Detail)
-			assert.Equal(t, LargeText(response), filteredUserLogs[0].Detail.ResponseBody)
+			assert.Nil(t, filteredUserLogs[0].Detail)
+			assert.True(t, filteredUserLogs[0].HasDetail)
+			assert.Equal(t, stored[0].Id, filteredUserLogs[0].DetailId)
 
 			var exported []*Log
 			require.NoError(t, StreamUserLogs(context.Background(), 42, filter, func(log *Log) error {
@@ -153,7 +167,8 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, userLogs, 2)
 			for _, entry := range userLogs {
-				require.NotNil(t, entry.Detail)
+				assert.Nil(t, entry.Detail)
+				assert.True(t, entry.HasDetail)
 				wantOther := `{"model_price":1.25}`
 				if entry.Type == LogTypeConsume {
 					wantOther = `{"model_price":1.25,"content_parts":[{"key":"Model test"}]}`
@@ -221,4 +236,266 @@ func TestResolveLogPayloadsPrefersCapturedStructuredRequestBody(t *testing.T) {
 	if request != transformedBody {
 		t.Fatalf("expected transformed request payload, got %q", request)
 	}
+}
+
+func useLogPerformanceDatabase(t testing.TB) {
+	t.Helper()
+	previousDB, previousLogDB := DB, LOG_DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	previousPath, previousMemory := common.SQLitePath, common.MemoryCacheEnabled
+	t.Cleanup(func() {
+		DB, LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMain, previousLog)
+		common.SQLitePath, common.MemoryCacheEnabled = previousPath, previousMemory
+		initCol()
+	})
+	common.MemoryCacheEnabled = false
+	for i, name := range []string{"LOG_PERF_MAIN_DSN", "LOG_PERF_LOG_DSN"} {
+		common.SQLitePath = filepath.Join(t.TempDir(), "logs.db")
+		db, typ, err := chooseDB(name, false)
+		require.NoError(t, err)
+		db = db.Session(&gorm.Session{Logger: db.Logger.LogMode(gormlogger.Silent)})
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+		if i == 0 {
+			DB = db
+			common.SetMainDatabaseType(typ)
+			require.NoError(t, DB.AutoMigrate(&Channel{}, &SystemTaskLock{}))
+			require.NoError(t, DB.Where("type = ?", logDetailCleanupLockType).Delete(&SystemTaskLock{}).Error)
+			continue
+		}
+		LOG_DB = db
+		common.SetLogDatabaseType(typ)
+		require.NoError(t, LOG_DB.AutoMigrate(&Log{}, &LogDetail{}))
+		for _, table := range []any{&LogDetail{}, &Log{}} {
+			require.NoError(t, LOG_DB.Where("1 = 1").Delete(table).Error)
+		}
+	}
+	mainDB := DB
+	t.Cleanup(func() {
+		require.NoError(t, mainDB.Where("type = ?", logDetailCleanupLockType).Delete(&SystemTaskLock{}).Error)
+	})
+	initCol()
+}
+
+func TestLogListsDoNotLoadBodies(t *testing.T) {
+	useLogPerformanceDatabase(t)
+	entry := &Log{UserId: 42, TokenId: 11, CreatedAt: 1, Type: LogTypeConsume}
+	require.NoError(t, LOG_DB.Create(entry).Error)
+	body := LargeText(strings.Repeat("x", 1<<20))
+	require.NoError(t, LOG_DB.Create(&LogDetail{LogId: entry.Id, RequestBody: body, ResponseBody: body}).Error)
+	for _, query := range []struct {
+		name string
+		run  func() ([]*Log, error)
+	}{
+		{"admin", func() ([]*Log, error) { logs, _, err := GetAllLogs(LogFilter{}, 0, 100); return logs, err }},
+		{"user", func() ([]*Log, error) { logs, _, err := GetUserLogs(42, LogFilter{}, 0, 100); return logs, err }},
+		{"token", func() ([]*Log, error) { return GetLogByTokenId(11) }},
+	} {
+		t.Run(query.name, func(t *testing.T) {
+			logs, err := query.run()
+			require.NoError(t, err)
+			require.Len(t, logs, 1)
+			assert.True(t, logs[0].Detail == nil, "list must not read saved bodies")
+			assert.True(t, logs[0].HasDetail)
+			assert.Equal(t, entry.Id, logs[0].DetailId)
+			encoded, err := common.Marshal(logs)
+			require.NoError(t, err)
+			assert.Less(t, len(encoded), 2048, "response size must be independent of body size")
+		})
+	}
+}
+
+func TestDeleteOldLogsRespectsBatchLimit(t *testing.T) {
+	useLogPerformanceDatabase(t)
+	for i := range 9 {
+		require.NoError(t, LOG_DB.Create(&Log{UserId: 42, CreatedAt: int64(i + 1)}).Error)
+	}
+	deleted, err := DeleteOldLogBatch(context.Background(), 8, 3)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, deleted)
+	var remaining int64
+	require.NoError(t, LOG_DB.Model(&Log{}).Count(&remaining).Error)
+	assert.EqualValues(t, 6, remaining)
+	for _, want := range []int64{3, 1, 0} {
+		deleted, err = DeleteOldLogBatch(context.Background(), 8, 3)
+		require.NoError(t, err)
+		assert.Equal(t, want, deleted)
+	}
+	var retained []int64
+	require.NoError(t, LOG_DB.Model(&Log{}).Order("created_at").Pluck("created_at", &retained).Error)
+	assert.Equal(t, []int64{8, 9}, retained)
+}
+
+func BenchmarkLogListPayloads(b *testing.B) {
+	useLogPerformanceDatabase(b)
+	body := LargeText(strings.Repeat("x", 1<<20))
+	for range 100 {
+		entry := &Log{UserId: 42, CreatedAt: 1, Type: LogTypeConsume}
+		require.NoError(b, LOG_DB.Create(entry).Error)
+		require.NoError(b, LOG_DB.Create(&LogDetail{LogId: entry.Id, RequestBody: body}).Error)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	var size int
+	for range b.N {
+		logs, _, err := GetUserLogs(42, LogFilter{}, 0, 100)
+		require.NoError(b, err)
+		encoded, err := common.Marshal(logs)
+		require.NoError(b, err)
+		size = len(encoded)
+	}
+	b.ReportMetric(float64(size), "response-bytes")
+}
+
+func TestLogDetailAccessAndExpiry(t *testing.T) {
+	useLogPerformanceDatabase(t)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 2, CreatedAt: 1}).Error)
+	entries := []Log{
+		{UserId: 2, TokenId: 22, CreatedAt: 1},
+		{UserId: 1, TokenId: 11, CreatedAt: 2},
+		{UserId: 1, TokenId: 12, CreatedAt: 3},
+	}
+	for i := range entries {
+		require.NoError(t, LOG_DB.Create(&entries[i]).Error)
+	}
+	entry := entries[1]
+	require.NoError(t, LOG_DB.Create(&LogDetail{LogId: entry.Id, RequestBody: "complete request", ResponseBody: "complete response"}).Error)
+	listed, _, err := GetUserLogs(1, LogFilter{}, 1, 1)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, 2, listed[0].Id)
+	assert.Equal(t, entry.Id, listed[0].DetailId)
+	assert.NotEqual(t, listed[0].Id, listed[0].DetailId)
+	// A different page size still provides the same stable detail identifier.
+	listed, _, err = GetUserLogs(1, LogFilter{}, 0, 2)
+	require.NoError(t, err)
+	assert.Equal(t, entry.Id, listed[1].DetailId)
+	for _, tc := range []struct {
+		name    string
+		scope   LogDetailScope
+		allowed bool
+	}{
+		{"owner", LogDetailScope{UserId: 1}, true},
+		{"own token", LogDetailScope{UserId: 1, TokenId: 11}, true},
+		{"administrator", LogDetailScope{UserId: 9, Admin: true}, true},
+		{"anonymous", LogDetailScope{}, false},
+		{"other user", LogDetailScope{UserId: 2}, false},
+		{"other token of same user", LogDetailScope{UserId: 1, TokenId: 12}, false},
+		{"token of wrong user", LogDetailScope{UserId: 2, TokenId: 11}, false},
+		{"admin token stays scoped", LogDetailScope{UserId: 1, TokenId: 12, Admin: true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			detail, err := GetLogDetail(context.Background(), entry.Id, tc.scope)
+			if !tc.allowed {
+				assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+				assert.Nil(t, detail)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, detail)
+			assert.Equal(t, LargeText("complete request"), detail.RequestBody)
+			assert.Equal(t, LargeText("complete response"), detail.ResponseBody)
+		})
+	}
+	missing, err := GetLogDetail(context.Background(), entries[2].Id, LogDetailScope{UserId: 1})
+	require.NoError(t, err)
+	assert.Nil(t, missing)
+	require.NoError(t, LOG_DB.Where("log_id = ?", entry.Id).Delete(&LogDetail{}).Error)
+	expired, err := GetLogDetail(context.Background(), entry.Id, LogDetailScope{UserId: 1})
+	require.NoError(t, err)
+	assert.Nil(t, expired)
+	listed, _, err = GetUserLogs(1, LogFilter{}, 0, 2)
+	require.NoError(t, err)
+	assert.False(t, listed[1].HasDetail)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = GetUserLogsWithContext(ctx, 1, LogFilter{}, 0, 100)
+	assert.ErrorIs(t, err, context.Canceled)
+	_, _, err = GetAllLogsWithContext(ctx, LogFilter{}, 0, 100)
+	assert.ErrorIs(t, err, context.Canceled)
+	_, err = GetLogByTokenIdWithContext(ctx, 11)
+	assert.ErrorIs(t, err, context.Canceled)
+	_, err = GetLogDetail(ctx, entry.Id, LogDetailScope{UserId: 1})
+	assert.ErrorIs(t, err, context.Canceled)
+	_, err = DeleteOldLogBatch(ctx, 8, 3)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestLogRetentionBatchAndLease(t *testing.T) {
+	useLogPerformanceDatabase(t)
+	for i := range 7 {
+		require.NoError(t, LOG_DB.Create(&LogDetail{LogId: i + 1, CreatedAt: int64(i + 1), RequestBody: "retained body"}).Error)
+	}
+	for _, want := range []int64{2, 2, 1, 0} {
+		deleted, err := deleteExpiredLogDetailBatch(context.Background(), 6, 2)
+		require.NoError(t, err)
+		assert.Equal(t, want, deleted)
+	}
+	var retained []int64
+	require.NoError(t, LOG_DB.Model(&LogDetail{}).Order("created_at").Pluck("created_at", &retained).Error)
+	assert.Equal(t, []int64{6, 7}, retained)
+
+	acquired, err := acquireLogDetailCleanupLease(context.Background(), "first-master")
+	require.NoError(t, err)
+	require.True(t, acquired)
+	acquired, err = acquireLogDetailCleanupLease(context.Background(), "second-master")
+	require.NoError(t, err)
+	assert.False(t, acquired)
+	require.NoError(t, DB.Model(&SystemTaskLock{}).
+		Where("type = ?", logDetailCleanupLockType).Update("locked_until", 1).Error)
+	acquired, err = acquireLogDetailCleanupLease(context.Background(), "second-master")
+	require.NoError(t, err)
+	assert.True(t, acquired)
+
+	require.NoError(t, DB.Where("type = ?", logDetailCleanupLockType).Delete(&SystemTaskLock{}).Error)
+	type leaseResult struct {
+		acquired bool
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan leaseResult, 2)
+	for _, owner := range []string{"competing-master-a", "competing-master-b"} {
+		go func() {
+			<-start
+			acquired, err := acquireLogDetailCleanupLease(context.Background(), owner)
+			results <- leaseResult{acquired, err}
+		}()
+	}
+	close(start)
+	winners := 0
+	for range 2 {
+		result := <-results
+		assert.NoError(t, result.err)
+		if result.acquired {
+			winners++
+		}
+	}
+	assert.Equal(t, 1, winners, "only one master may run a retention pass")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = deleteExpiredLogDetailBatch(ctx, 10, 2)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.ErrorIs(t, WaitLogCleanupBatch(ctx), context.Canceled)
+	_, err = acquireLogDetailCleanupLease(ctx, "cancelled-master")
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestUserLogCountStaysExactAboveTenThousand(t *testing.T) {
+	useLogPerformanceDatabase(t)
+	entries := make([]Log, 10001)
+	for i := range entries {
+		entries[i] = Log{UserId: 42, CreatedAt: 1}
+	}
+	require.NoError(t, LOG_DB.CreateInBatches(entries, 100).Error)
+	logs, total, err := GetUserLogs(42, LogFilter{}, -1, -1)
+	require.NoError(t, err)
+	assert.EqualValues(t, 10001, total)
+	assert.Len(t, logs, common.ItemsPerPage)
+	logs, _, err = GetAllLogs(LogFilter{}, -1, 1000)
+	require.NoError(t, err)
+	assert.Len(t, logs, 100)
 }

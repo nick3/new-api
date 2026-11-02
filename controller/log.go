@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // logFilterFromQuery reads the log search shared by the log list and the log
@@ -56,7 +58,7 @@ func limitLogTimeRange(startTimestamp int64, endTimestamp int64) (int64, error) 
 
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	logs, total, err := model.GetAllLogs(logFilterFromQuery(c, true), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	logs, total, err := model.GetAllLogsWithContext(c.Request.Context(), logFilterFromQuery(c, true), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -83,7 +85,7 @@ func GetUserLogs(c *gin.Context) {
 		}
 		filter.StartTimestamp = startTimestamp
 	}
-	logs, total, err := model.GetUserLogs(c.GetInt("id"), filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	logs, total, err := model.GetUserLogsWithContext(c.Request.Context(), c.GetInt("id"), filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -185,7 +187,7 @@ func GetLogByKey(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgTokenInvalid)
 		return
 	}
-	logs, err := model.GetLogByTokenId(tokenId)
+	logs, err := model.GetLogByTokenIdWithContext(c.Request.Context(), tokenId)
 	if err != nil {
 		c.JSON(200, gin.H{
 			"success": false,
@@ -198,6 +200,47 @@ func GetLogByKey(c *gin.Context) {
 		"message": "",
 		"data":    logs,
 	})
+}
+
+func GetLogDetail(c *gin.Context) {
+	scope := model.LogDetailScope{
+		UserId: c.GetInt("id"),
+		Admin:  c.GetInt("role") >= common.RoleAdminUser,
+	}
+	getLogDetail(c, scope)
+}
+
+func GetUserLogDetail(c *gin.Context) {
+	getLogDetail(c, model.LogDetailScope{UserId: c.GetInt("id")})
+}
+
+func GetLogDetailByKey(c *gin.Context) {
+	// Token access stays restricted to that token, even for an admin-owned token.
+	scope := model.LogDetailScope{UserId: c.GetInt("id"), TokenId: c.GetInt("token_id")}
+	if scope.TokenId <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgTokenInvalid)
+		return
+	}
+	getLogDetail(c, scope)
+}
+
+func getLogDetail(c *gin.Context, scope model.LogDetailScope) {
+	c.Header("Cache-Control", "no-store")
+	logId, err := strconv.Atoi(c.Param("id"))
+	if err != nil || logId <= 0 {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Not found"})
+		return
+	}
+	detail, err := model.GetLogDetail(c.Request.Context(), logId, scope)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Not found"})
+		return
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, detail)
 }
 
 func GetLogsStat(c *gin.Context) {

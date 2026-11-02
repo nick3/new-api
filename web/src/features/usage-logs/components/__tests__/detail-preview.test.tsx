@@ -194,6 +194,18 @@ test('request details use the current callback after the parent changes it', () 
   expect(previous).not.toHaveBeenCalled()
 })
 
+test('opens details from the saved-detail marker without downloading bodies in the list', () => {
+  const log = Object.assign(makeLog({}), { has_detail: true, detail_id: 987 })
+  const onOpenDetail = vi.fn()
+  render(
+    <I18nextProvider i18n={i18n}>
+      <RequestDetailAction log={log} onOpenDetail={onOpenDetail} />
+    </I18nextProvider>
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Request Details' }))
+  expect(onOpenDetail).toHaveBeenCalledWith(log)
+})
+
 test.each([
   {
     name: 'fixed expression zero price',

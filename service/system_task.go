@@ -401,6 +401,10 @@ func runLogCleanupTask(ctx context.Context, task *model.SystemTask, runnerID str
 				logSystemTaskLockError(ctx, task, err)
 				return
 			}
+			if err := model.WaitLogCleanupBatch(ctx); err != nil {
+				failSystemTask(task, runnerID, err)
+				return
+			}
 		}
 
 		if !progressed {

@@ -177,15 +177,18 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       searchParams,
       t,
     ],
-    queryFn: async () => {
-      const result = await fetchLogsByCategory({
-        logCategory,
-        isAdmin,
-        page: pagination.pageIndex + 1,
-        pageSize: pagination.pageSize,
-        searchParams,
-        columnFilters,
-      })
+    queryFn: async ({ signal }) => {
+      const result = await fetchLogsByCategory(
+        {
+          logCategory,
+          isAdmin,
+          page: pagination.pageIndex + 1,
+          pageSize: pagination.pageSize,
+          searchParams,
+          columnFilters,
+        },
+        signal
+      )
 
       if (!result?.success) {
         throw createServerError(result, t('Failed to load logs'))
@@ -239,11 +242,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const isCommon = logCategory === 'common'
 
   useEffect(() => {
-    if (!isCommon) {
-      setSelectedLogDetail(null)
-      setDetailSheetOpen(false)
-    }
-  }, [isCommon])
+    setSelectedLogDetail(null)
+    setDetailSheetOpen(false)
+  }, [logCategory, viewAccess, userId])
 
   return (
     <>
@@ -302,12 +303,16 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
           )
         }}
       />
-      {isCommon && (
+      {isCommon && detailSheetOpen && selectedLogDetail && (
         <UsageLogDetailSheet
+          key={selectedLogDetail.detail_id ?? selectedLogDetail.id}
           log={selectedLogDetail}
           open={detailSheetOpen}
           isAdmin={isAdmin}
-          onOpenChange={setDetailSheetOpen}
+          onOpenChange={(open) => {
+            setDetailSheetOpen(open)
+            if (!open) setSelectedLogDetail(null)
+          }}
         />
       )}
     </>

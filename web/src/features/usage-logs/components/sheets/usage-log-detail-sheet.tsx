@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -20,6 +21,8 @@ import { Check, ChevronDown, Copy, Download, FileText } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -51,8 +54,11 @@ import {
   formatTimestampToDate,
   formatUseTime,
 } from '@/lib/format'
+import { getServerErrorMessage } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
+import { getLogDetail } from '../../api'
 import type { UsageLog } from '../../data/schema'
 import {
   DETAIL_PREVIEW_BYTES,
@@ -60,7 +66,6 @@ import {
   extractDetailMessages,
   extractDetailTools,
   extractStreamChunks,
-  hasSavedDetail,
   parsePayload,
   type DetailMessage,
   type DetailStreamChunk,
@@ -957,7 +962,7 @@ function EmptyDetailState() {
         </EmptyMedia>
         <EmptyTitle>{t('No saved request details')}</EmptyTitle>
         <EmptyDescription>
-          {t('This record does not have saved request details.')}
+          {t('Saved request details are missing or have expired.')}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -975,25 +980,37 @@ export function UsageLogDetailSheet({
   const [copiedKey, setCopiedKey] = useState<CopiedKey>(null)
   const { copyToClipboard } = useCopyToClipboard()
 
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const detailId = log?.detail_id ?? 0
+  const detailQuery = useQuery({
+    queryKey: ['usage-log-detail', userId, isAdmin, detailId],
+    queryFn: ({ signal }) => getLogDetail(detailId, isAdmin, signal),
+    enabled: open && detailId > 0 && !log?.detail,
+    gcTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    meta: { errorToast: false },
+  })
+  const detail = open ? (log?.detail ?? detailQuery.data) : null
   const other = useMemo(() => parseLogOther(log?.other ?? ''), [log?.other])
   const requestPayload = useMemo(
     () =>
       parsePayload(
-        log?.detail?.request_body,
+        detail?.request_body,
         DETAIL_PREVIEW_BYTES,
         DETAIL_TRUNCATE_BYTES,
         { parseJsonWhenTruncated: true }
       ),
-    [log?.detail?.request_body]
+    [detail?.request_body]
   )
   const responsePayload = useMemo(
     () =>
       parsePayload(
-        log?.detail?.response_body,
+        detail?.response_body,
         DETAIL_PREVIEW_BYTES,
         DETAIL_TRUNCATE_BYTES
       ),
-    [log?.detail?.response_body]
+    [detail?.response_body]
   )
   const messages = useMemo(
     () => extractDetailMessages(requestPayload, responsePayload),
@@ -1008,7 +1025,7 @@ export function UsageLogDetailSheet({
     [responsePayload]
   )
   const typeConfig = getLogTypeConfig(log?.type ?? 0)
-  const hasDetail = log ? hasSavedDetail(log) : false
+  const hasDetail = detail != null
   const tokenText = log
     ? `${log.prompt_tokens.toLocaleString()} / ${log.completion_tokens.toLocaleString()}`
     : '-'
@@ -1149,6 +1166,31 @@ export function UsageLogDetailSheet({
     onOpenChange(nextOpen)
   }
 
+  let detailState: ReactNode = null
+  if (detailQuery.isFetching) {
+    detailState = (
+      <div role='status' aria-live='polite'>
+        <LoadingState />
+      </div>
+    )
+  } else if (detailQuery.isError) {
+    detailState = (
+      <ErrorState
+        title={t('Failed to load request details')}
+        description={getServerErrorMessage(detailQuery.error)}
+        onRetry={() => {
+          void detailQuery.refetch()
+        }}
+      />
+    )
+  } else if (!hasDetail) {
+    detailState = (
+      <ScrollArea className='h-full'>
+        <EmptyDetailState />
+      </ScrollArea>
+    )
+  }
+
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent className='w-screen max-w-none gap-0 p-0 sm:w-[min(960px,92vw)] sm:max-w-none'>
@@ -1194,11 +1236,7 @@ export function UsageLogDetailSheet({
           </div>
 
           <div className='min-h-0 flex-1 overflow-hidden p-4 sm:p-6'>
-            {!hasDetail ? (
-              <ScrollArea className='h-full'>
-                <EmptyDetailState />
-              </ScrollArea>
-            ) : (
+            {detailState ?? (
               <>
                 <TabsContent value='overview' className='mt-0 h-full min-h-0'>
                   <ScrollArea className='h-full'>

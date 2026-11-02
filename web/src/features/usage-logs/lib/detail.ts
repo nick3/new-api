@@ -65,6 +65,8 @@ interface ParsePayloadOptions {
 }
 
 export function hasSavedDetail(log: UsageLog): boolean {
+  if (log.has_detail !== undefined) return log.has_detail
+  // Older servers may still embed bodies in the list response.
   const requestBody = log.detail?.request_body?.trim() ?? ''
   const responseBody = log.detail?.response_body?.trim() ?? ''
   return requestBody.length > 0 || responseBody.length > 0

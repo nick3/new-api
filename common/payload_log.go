@@ -119,12 +119,24 @@ func truncatedSuffix(overflow int) string {
 }
 
 func applyLogLimit(value string) string {
-	runes := []rune(value)
-	if len(runes) <= maxLogPayloadRunes {
+	count := utf8.RuneCountInString(value)
+	if count <= maxLogPayloadRunes {
 		return value
 	}
-	trimmed := string(runes[:maxLogPayloadRunes])
-	return trimmed + truncatedSuffix(len(runes)-maxLogPayloadRunes)
+	// Build only the preview; converting the entire body to []rune can
+	// temporarily allocate four bytes per character for large base64 inputs.
+	var preview strings.Builder
+	preview.Grow(maxLogPayloadRunes * utf8.UTFMax)
+	written := 0
+	for _, r := range value {
+		if written == maxLogPayloadRunes {
+			break
+		}
+		preview.WriteRune(r)
+		written++
+	}
+	preview.WriteString(truncatedSuffix(count - maxLogPayloadRunes))
+	return preview.String()
 }
 
 func formatPayloadForLog(data []byte) string {

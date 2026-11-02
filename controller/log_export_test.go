@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -243,4 +244,173 @@ func TestAcquireLogExportLock(t *testing.T) {
 			releaseAgain()
 		})
 	}
+}
+
+func TestLogDetailHTTPDatabaseMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		kind, env string
+		typ       common.DatabaseType
+	}{
+		{"sqlite", "", common.DatabaseTypeSQLite},
+		{"mysql", "AUDIT_MYSQL_DSN", common.DatabaseTypeMySQL},
+		{"postgres", "AUDIT_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
+		{"clickhouse", "AUDIT_CLICKHOUSE_DSN", common.DatabaseTypeClickHouse},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			dsn := os.Getenv(tc.env)
+			if tc.env != "" && dsn == "" {
+				t.Skip(tc.env + " is not configured")
+			}
+			mainDB, _ := newAuditTestDatabase(t, "sqlite", "")
+			logDB, isolatedDSN := newAuditTestDatabase(t, tc.kind, dsn)
+			useLogExportDatabases(t, mainDB, logDB, common.DatabaseTypeSQLite, tc.typ)
+			require.NoError(t, mainDB.AutoMigrate(&model.Channel{}))
+			if tc.kind == "clickhouse" {
+				previousMaster := common.IsMasterNode
+				common.IsMasterNode = true
+				t.Cleanup(func() { common.IsMasterNode = previousMaster })
+				t.Setenv("LOG_SQL_DSN", isolatedDSN)
+				require.NoError(t, model.InitLogDB())
+				logDB = model.LOG_DB
+			} else {
+				require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.LogDetail{}))
+			}
+			now := time.Now().Unix()
+			entries := []model.Log{
+				{UserId: 2, TokenId: 22, CreatedAt: now - 10, RequestId: "other"},
+				{UserId: 1, TokenId: 11, CreatedAt: now - 5, RequestId: "saved"},
+				{UserId: 1, TokenId: 12, CreatedAt: now, RequestId: "missing"},
+			}
+			for i := range entries {
+				require.NoError(t, logDB.Create(&entries[i]).Error)
+			}
+			if tc.kind == "clickhouse" {
+				logs, _, err := model.GetUserLogsWithContext(context.Background(), 1, model.LogFilter{}, 0, 100)
+				require.NoError(t, err)
+				require.Len(t, logs, 2)
+				assert.False(t, logs[0].HasDetail)
+				assert.Zero(t, logs[0].DetailId)
+				_, err = model.GetLogDetail(context.Background(), 1, model.LogDetailScope{Admin: true})
+				assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+				// ClickHouse deliberately uses one synchronous mutation, not row batches.
+				deleted, err := model.DeleteOldLogBatch(context.Background(), now, 1)
+				require.NoError(t, err)
+				assert.EqualValues(t, 2, deleted)
+				var retained int64
+				require.NoError(t, logDB.Model(&model.Log{}).Count(&retained).Error)
+				assert.EqualValues(t, 1, retained)
+				return
+			}
+			body := strings.Repeat("x", 1<<20)
+			require.NoError(t, logDB.Create(&model.LogDetail{LogId: entries[1].Id, RequestBody: model.LargeText(body)}).Error)
+			listed := callLogHandler(t, GetUserLogs, 1, common.RoleCommonUser, "")[0]
+			require.Equal(t, true, listed["success"])
+			items := listed["data"].(map[string]any)["items"].([]any)
+			saved := items[1].(map[string]any)
+			assert.EqualValues(t, 2, saved["id"])
+			assert.EqualValues(t, entries[1].Id, saved["detail_id"])
+			assert.Equal(t, true, saved["has_detail"])
+			assert.NotContains(t, saved, "detail")
+
+			for _, test := range []struct {
+				name                  string
+				user, role, token, id int
+				handler               gin.HandlerFunc
+				status                int
+				hasBody               bool
+			}{
+				{"owner", 1, common.RoleCommonUser, 0, entries[1].Id, GetUserLogDetail, http.StatusOK, true},
+				{"other user", 2, common.RoleCommonUser, 0, entries[1].Id, GetUserLogDetail, http.StatusNotFound, false},
+				{"admin", 3, common.RoleAdminUser, 0, entries[1].Id, GetLogDetail, http.StatusOK, true},
+				{"admin self stays scoped", 3, common.RoleAdminUser, 0, entries[1].Id, GetUserLogDetail, http.StatusNotFound, false},
+				{"root", 3, common.RoleRootUser, 0, entries[1].Id, GetLogDetail, http.StatusOK, true},
+				{"own token", 1, common.RoleCommonUser, 11, entries[1].Id, GetLogDetailByKey, http.StatusOK, true},
+				{"other token", 1, common.RoleRootUser, 12, entries[1].Id, GetLogDetailByKey, http.StatusNotFound, false},
+				{"wrong owner", 2, common.RoleCommonUser, 11, entries[1].Id, GetLogDetailByKey, http.StatusNotFound, false},
+				{"missing body", 1, common.RoleCommonUser, 0, entries[2].Id, GetUserLogDetail, http.StatusOK, false},
+				{"missing log", 1, common.RoleCommonUser, 0, entries[2].Id + 1000, GetUserLogDetail, http.StatusNotFound, false},
+				{"invalid id", 1, common.RoleCommonUser, 0, -1, GetUserLogDetail, http.StatusNotFound, false},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					recorder := httptest.NewRecorder()
+					ctx, _ := gin.CreateTestContext(recorder)
+					ctx.Request = httptest.NewRequest(http.MethodGet, "/api/log/detail", nil)
+					ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprint(test.id)}}
+					ctx.Set("id", test.user)
+					ctx.Set("role", test.role)
+					ctx.Set("token_id", test.token)
+					test.handler(ctx)
+					require.Equal(t, test.status, recorder.Code)
+					assert.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+					var result struct {
+						Success bool
+						Data    *model.LogDetail
+					}
+					require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+					if test.hasBody {
+						require.NotNil(t, result.Data)
+						assert.True(t, string(result.Data.RequestBody) == body)
+					} else {
+						assert.Nil(t, result.Data)
+					}
+				})
+			}
+			require.NoError(t, logDB.Where("log_id = ?", entries[1].Id).Delete(&model.LogDetail{}).Error)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/api/log/detail", nil)
+			ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprint(entries[1].Id)}}
+			ctx.Set("id", 1)
+			GetLogDetail(ctx)
+			assert.JSONEq(t, `{"success":true,"message":"","data":null}`, recorder.Body.String())
+		})
+	}
+}
+
+func TestLogDetailCredentialScopes(t *testing.T) {
+	user, _ := setupAccessTokenAudit(t)
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitLogDB())
+	require.NoError(t, model.DB.AutoMigrate(&model.LogDetail{}, &model.Token{}))
+	token := &model.Token{UserId: user.Id, Key: strings.Repeat("k", 48), Name: "detail key", Status: common.TokenStatusEnabled}
+	require.NoError(t, model.DB.Create(token).Error)
+	entries := []model.Log{
+		{UserId: user.Id, TokenId: token.Id, CreatedAt: time.Now().Unix()},
+		{UserId: user.Id + 1, TokenId: token.Id + 1, CreatedAt: time.Now().Unix()},
+	}
+	for i := range entries {
+		require.NoError(t, model.LOG_DB.Create(&entries[i]).Error)
+		require.NoError(t, model.LOG_DB.Create(&model.LogDetail{LogId: entries[i].Id, RequestBody: "saved request"}).Error)
+	}
+	usageRead, _ := createScopedAccessToken(t, user.Id, 0, "usage:read")
+	logRead, _ := createScopedAccessToken(t, user.Id, 0, "log:read")
+	profileRead, _ := createScopedAccessToken(t, user.Id, 0, "profile:read")
+	expired, _ := createScopedAccessToken(t, user.Id, time.Now().Unix()-1, "usage:read")
+	router := newAccessTokenTestRouter()
+	router.GET("/api/log/:id/detail", middleware.AdminAuth(), GetLogDetail)
+	router.GET("/api/log/self/:id/detail", middleware.UserAuth(), GetUserLogDetail)
+	router.GET("/api/log/token/:id/detail", middleware.TokenAuthReadOnly(), GetLogDetailByKey)
+	for _, tc := range []struct {
+		name, credential, path string
+		status                 int
+	}{
+		{"own usage grant", usageRead, fmt.Sprintf("/api/log/self/%d/detail", entries[0].Id), http.StatusOK},
+		{"usage grant cannot read another owner", usageRead, fmt.Sprintf("/api/log/self/%d/detail", entries[1].Id), http.StatusNotFound},
+		{"usage grant cannot enter admin route", usageRead, fmt.Sprintf("/api/log/%d/detail", entries[1].Id), http.StatusForbidden},
+		{"admin log grant", logRead, fmt.Sprintf("/api/log/%d/detail", entries[1].Id), http.StatusOK},
+		{"unrelated grant", profileRead, fmt.Sprintf("/api/log/self/%d/detail", entries[0].Id), http.StatusForbidden},
+		{"expired grant", expired, fmt.Sprintf("/api/log/self/%d/detail", entries[0].Id), http.StatusUnauthorized},
+		{"API key owns detail", token.Key, fmt.Sprintf("/api/log/token/%d/detail", entries[0].Id), http.StatusOK},
+		{"API key cannot cross token boundary", token.Key, fmt.Sprintf("/api/log/token/%d/detail", entries[1].Id), http.StatusNotFound},
+		{"personal token cannot enter API key route", profileRead, fmt.Sprintf("/api/log/token/%d/detail", entries[0].Id), http.StatusUnauthorized},
+		{"no credential", "", fmt.Sprintf("/api/log/self/%d/detail", entries[0].Id), http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := accessTokenRequest(router, http.MethodGet, tc.path, tc.credential, "", "")
+			assert.Equal(t, tc.status, response.Code)
+		})
+	}
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", token.Id).Update("status", common.TokenStatusDisabled).Error)
+	response := accessTokenRequest(router, http.MethodGet, fmt.Sprintf("/api/log/token/%d/detail", entries[0].Id), token.Key, "", "")
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
 }

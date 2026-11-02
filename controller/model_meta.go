@@ -32,9 +32,14 @@ func listModelsMeta(c *gin.Context, keyword, vendor string) {
 	}
 
 	pageInfo := common.GetPageQuery(c)
-	if squareState != "" && (pageInfo.GetPage() < 1 || pageInfo.GetPageSize() < 1) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid pagination"})
-		return
+	if squareState != "" {
+		// This API rejects negative bounds rather than normalizing them.
+		for _, key := range []string{"p", "page_size", "ps", "size"} {
+			if value, _ := strconv.Atoi(c.Query(key)); value < 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid pagination"})
+				return
+			}
+		}
 	}
 	offset, limit := pageInfo.GetStartIdx(), pageInfo.GetPageSize()
 	if squareState != "" {

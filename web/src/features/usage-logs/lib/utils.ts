@@ -241,7 +241,8 @@ export function buildApiParams(config: {
  * Fetch logs based on category type
  */
 export async function fetchLogsByCategory(
-  config: FetchLogsConfig
+  config: FetchLogsConfig,
+  signal?: AbortSignal
 ): Promise<GetLogsResponse> {
   const { logCategory, isAdmin, page, pageSize, searchParams, columnFilters } =
     config
@@ -254,7 +255,9 @@ export async function fetchLogsByCategory(
       columnFilters,
       isAdmin,
     })
-    return isAdmin ? await getAllLogs(params) : await getUserLogs(params)
+    return isAdmin
+      ? await getAllLogs(params, signal)
+      : await getUserLogs(params, signal)
   }
 
   // For drawing and task logs

@@ -17,9 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api, getFreshAuthHeaders, type ApiRequestConfig } from '@/lib/api'
-import { createServerError } from '@/lib/server-error-message'
+import {
+  createServerError,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
-import type { UsageLog } from './data/schema'
+import {
+  usageLogDetailSchema,
+  type UsageLog,
+  type UsageLogDetail,
+} from './data/schema'
 import { buildQueryParams } from './lib/query-params'
 import { parseTaskArtifactsResponse } from './lib/task-artifacts'
 import type {
@@ -44,7 +51,8 @@ function buildApiPath(endpoint: string, isAdmin: boolean): string {
 async function fetchLogs<T>(
   endpoint: string,
   params: T,
-  isAdmin: boolean
+  isAdmin: boolean,
+  signal?: AbortSignal
 ): Promise<GetLogsResponse> {
   const paramRecord = params as unknown as Record<string, unknown>
   const queryParams = buildQueryParams({
@@ -53,7 +61,10 @@ async function fetchLogs<T>(
     ...params,
   })
   const path = buildApiPath(endpoint, isAdmin)
-  const res = await api.get(`${path}?${queryParams}`)
+  const res = await api.get(`${path}?${queryParams}`, {
+    signal,
+    disableDuplicate: signal != null,
+  })
   return res.data
 }
 
@@ -74,12 +85,31 @@ async function fetchLogStats<T>(
 // Common Log APIs
 // ============================================================================
 
-export const getAllLogs = (params: GetLogsParams = {}) =>
-  fetchLogs('/api/log', params, true)
+export const getAllLogs = (params: GetLogsParams = {}, signal?: AbortSignal) =>
+  fetchLogs('/api/log', params, true, signal)
 
 export const getUserLogs = (
-  params: Omit<GetLogsParams, 'username' | 'channel'> = {}
-) => fetchLogs('/api/log', params, false)
+  params: Omit<GetLogsParams, 'username' | 'channel'> = {},
+  signal?: AbortSignal
+) => fetchLogs('/api/log', params, false, signal)
+
+export async function getLogDetail(
+  logId: number,
+  isAdmin: boolean,
+  signal?: AbortSignal
+): Promise<UsageLogDetail | null> {
+  // React Query owns sharing; reopening must not reuse an aborted GET.
+  const response = await api.get<{
+    success: boolean
+    message?: string
+    data?: UsageLogDetail | null
+  }>(`${buildApiPath('/api/log', isAdmin)}/${logId}/detail`, {
+    signal,
+    disableDuplicate: true,
+  })
+  const result = requireServerSuccess(response.data)
+  return result.data ? usageLogDetailSchema.parse(result.data) : null
+}
 
 export const getLogStats = (params: GetLogStatsParams = {}) =>
   fetchLogStats('/api/log', params, true)
