@@ -124,6 +124,31 @@ func TestLogDetailMigrationAndScopedMetadata(t *testing.T) {
 				assert.Equal(t, LargeText(request), entry.Detail.RequestBody)
 				assert.Equal(t, LargeText(response), entry.Detail.ResponseBody)
 			}
+			filter := LogFilter{Type: LogTypeConsume}
+			allLogs, total, err := GetAllLogs(filter, 0, 10)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			require.Len(t, allLogs, 1)
+			require.NotNil(t, allLogs[0].Detail)
+			assert.Equal(t, LargeText(request), allLogs[0].Detail.RequestBody)
+			filteredUserLogs, total, err := GetUserLogs(42, filter, 0, 10)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			require.Len(t, filteredUserLogs, 1)
+			require.NotNil(t, filteredUserLogs[0].Detail)
+			assert.Equal(t, LargeText(response), filteredUserLogs[0].Detail.ResponseBody)
+
+			var exported []*Log
+			require.NoError(t, StreamUserLogs(context.Background(), 42, filter, func(log *Log) error {
+				exported = append(exported, log)
+				return nil
+			}))
+			require.Len(t, exported, 1)
+			assert.JSONEq(t, filteredUserLogs[0].Other, exported[0].Other)
+			assert.Equal(t, 1, exported[0].Id)
+			assert.Empty(t, exported[0].ChannelName)
+			assert.Nil(t, exported[0].Detail, "CSV exports do not load request or response bodies")
+
 			userLogs, err := GetLogByTokenId(11)
 			require.NoError(t, err)
 			require.Len(t, userLogs, 2)

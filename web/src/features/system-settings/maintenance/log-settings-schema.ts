@@ -21,6 +21,10 @@ import * as z from 'zod'
 export const logSettingsSchema = z.object({
   LogConsumeEnabled: z.boolean(),
   DetailedLogRetentionDays: z.number().int().min(0),
+  log_setting: z.object({
+    user_export_enabled: z.boolean(),
+    max_range_days: z.number().int().min(1),
+  }),
 })
 
 export type LogSettingsFormValues = z.infer<typeof logSettingsSchema>
