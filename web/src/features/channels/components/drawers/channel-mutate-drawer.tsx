@@ -46,7 +46,6 @@ import {
   type ComponentProps,
   type ReactNode,
   useEffect,
-  useId,
   useState,
   useMemo,
   useCallback,
@@ -107,7 +106,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SecureVerificationDialog } from '@/features/auth/secure-verification'
-import { SettingsSwitchField } from '@/features/system-settings/components/settings-form-layout'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import type { PluginIconInput } from '@/features/task-plugins/lib/plugin-icon'
 import { fromRequestPluginConfigDraft } from '@/features/task-plugins/lib/request-plugins'
@@ -339,7 +337,6 @@ const SENSITIVE_FORM_FIELDS = [
   'force_format',
   'thinking_to_content',
   'proxy',
-  'pass_through_header_enabled',
   'http_protocol',
   'http2_connection_shards',
   'tls_insecure_skip_verify',
@@ -451,7 +448,6 @@ export function ChannelMutateDrawer({
   currentRow,
 }: ChannelMutateDrawerProps) {
   const { t, i18n } = useTranslation()
-  const headerPassthroughId = useId()
   const queryClient = useQueryClient()
   const { setOpen } = useChannels()
   const currentUser = useAuthStore((s) => s.auth.user)
@@ -5039,23 +5035,6 @@ export function ChannelMutateDrawer({
                 {formatFields}
                 {ollamaOpenAIChatFields}
                 {thinkingFields}
-                <FormField
-                  control={form.control}
-                  name='pass_through_header_enabled'
-                  render={({ field }) => (
-                    <SettingsSwitchField
-                      controlId={headerPassthroughId}
-                      label={t('Pass Through Headers')}
-                      description={t(
-                        'Forward downstream request headers before channel defaults and header overrides, excluding credentials and connection-specific headers.'
-                      )}
-                      checked={field.value === true}
-                      onCheckedChange={field.onChange}
-                      disabled={sensitiveLocked || isSubmitting}
-                      className='px-4'
-                    />
-                  )}
-                />
                 {passthroughFields}
                 {systemPromptFields}
                 {systemPromptOverrideFields}

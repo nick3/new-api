@@ -2186,6 +2186,7 @@ test('advanced custom edits preview draft connection settings with the saved key
 })
 
 test('an operator without sensitive write permission can discover saved models and update routing', async () => {
+  editingChannel.setting = '{"pass_through_header_enabled":true}'
   useAuthStore.setState({
     auth: {
       ...originalAuth,
@@ -2220,6 +2221,13 @@ test('an operator without sensitive write permission can discover saved models a
     await user.click(toggle)
     expect(toggle).not.toBeChecked()
   }
+  const headerPassthrough = quick.getByRole('switch', {
+    name: 'Pass Through Request Headers',
+  })
+  expect(headerPassthrough).toHaveAttribute('aria-disabled', 'true')
+  expect(headerPassthrough).toBeChecked()
+  await user.click(headerPassthrough)
+  expect(headerPassthrough).toBeChecked()
   expect(
     quick.getByRole('switch', { name: 'Auto-disable channel' })
   ).not.toHaveAttribute('aria-disabled', 'true')
@@ -2242,6 +2250,7 @@ test('an operator without sensitive write permission can discover saved models a
   await waitFor(() => expect(put).toHaveBeenCalled())
   expect(put.mock.calls[0]?.[1]).toMatchObject({ id: 42, priority: 8 })
   expect(put.mock.calls[0]?.[1]).not.toHaveProperty('setting')
+  expect(put.mock.calls[0]?.[1]).not.toHaveProperty('header_override')
   expect(put.mock.calls[0]?.[1]).not.toHaveProperty('key')
 })
 
@@ -3143,41 +3152,65 @@ test('a New API channel binds upstream task plugins and publishes their models',
   expect(payload.models?.split(',').sort()).toEqual(['gpt-5', 'video-b-1'])
 })
 
-test('saved alpha header passthrough remains editable independently of wildcard overrides', async () => {
-  editingChannel = {
-    ...editingChannel,
-    setting: '{"pass_through_header_enabled":true}',
-    header_override: '{"X-Custom":"value"}',
+test.each(['stacked', 'inline'])(
+  'legacy header passthrough uses the sole upstream switch in the %s layout and stays disabled after saving',
+  async (layout) => {
+    if (layout === 'inline') useWideScreen()
+    editingChannel = {
+      ...editingChannel,
+      setting: '{"pass_through_header_enabled":true}',
+      header_override: '{"X-Custom":"value"}',
+    }
+    const put = vi
+      .spyOn(api, 'put')
+      .mockImplementation(async (_url, payload) => {
+        editingChannel = { ...editingChannel, ...(payload as Partial<Channel>) }
+        return { data: { success: true } }
+      })
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    expect(
+      screen.getAllByRole('switch', { name: 'Pass Through Request Headers' })
+    ).toHaveLength(1)
+    expect(
+      screen.getByRole('switch', { name: 'Pass Through Request Headers' })
+    ).toBeChecked()
+
+    await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+    expect(
+      screen.queryByRole('switch', { name: 'Pass Through Headers' })
+    ).not.toBeInTheDocument()
+    const editor = screen.getByLabelText(
+      'Request Header Override'
+    ) as HTMLTextAreaElement
+    expect(JSON.parse(editor.value)).toEqual({ '*': true, 'X-Custom': 'value' })
+    await user.click(screen.getByRole('tab', { name: /Connection & Models/ }))
+    await user.click(
+      screen.getByRole('switch', { name: 'Pass Through Request Headers' })
+    )
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(JSON.parse(editingChannel.setting ?? '{}')).not.toHaveProperty(
+      'pass_through_header_enabled'
+    )
+    expect(JSON.parse(editingChannel.header_override ?? '{}')).toEqual({
+      'X-Custom': 'value',
+    })
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Update Channel' })
+      ).not.toBeInTheDocument()
+    )
+    await user.click(screen.getByRole('button', { name: 'Open channel' }))
+    await screen.findByDisplayValue('Existing channel')
+    expect(
+      screen.getByRole('switch', { name: 'Pass Through Request Headers' })
+    ).not.toBeChecked()
   }
-  const put = vi
-    .spyOn(api, 'put')
-    .mockResolvedValue({ data: { success: true } })
-  const user = userEvent.setup()
-  render(<ConfigurationHarness currentRow={editingChannel} />)
-  await screen.findByDisplayValue('Existing channel')
-  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
-  const processing = screen.getByRole('group', { name: 'Request processing' })
-  expect(
-    within(processing).getByRole('img', { name: 'Configured' })
-  ).toBeVisible()
-  const toggle = within(processing).getByRole('switch', {
-    name: 'Pass Through Headers',
-  })
-  expect(toggle).toBeChecked()
-  await user.click(toggle)
-  expect(toggle).not.toBeChecked()
-  expect(
-    within(processing).queryByRole('img', { name: 'Configured' })
-  ).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
-  await waitFor(() => expect(put).toHaveBeenCalled())
-  const payload = put.mock.calls[0]?.[1] as {
-    setting: string
-    header_override: string
-  }
-  expect(JSON.parse(payload.setting).pass_through_header_enabled).toBe(false)
-  expect(JSON.parse(payload.header_override)).toEqual({ 'X-Custom': 'value' })
-})
+)
 
 test('OpenAI path base URLs retain alpha guidance in the redesigned editor', async () => {
   render(<ConfigurationHarness currentRow={editingChannel} />)

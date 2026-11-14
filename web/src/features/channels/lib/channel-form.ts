@@ -41,6 +41,7 @@ import {
   validateAdvancedCustomConfig,
 } from './advanced-custom'
 import { readTaskExtendPluginKeys } from './channel-plugin-extensions'
+import { setHeaderPassthrough } from './header-passthrough'
 import { supportsResponsesWebSocket } from './responses-websocket'
 
 // ============================================================================
@@ -268,7 +269,6 @@ export const channelFormSchema = z
       .string()
       .optional()
       .refine(isOptionalProxyURL, ERROR_MESSAGES.INVALID_PROXY),
-    pass_through_header_enabled: z.boolean().optional(),
     http_protocol: z.enum(['auto', 'http1']).optional(),
     http2_connection_shards: z.number().int().optional(),
     tls_insecure_skip_verify: z.boolean().optional(),
@@ -472,7 +472,6 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   force_format: false,
   thinking_to_content: false,
   proxy: '',
-  pass_through_header_enabled: false,
   http_protocol: HTTP_PROTOCOL_AUTO,
   http2_connection_shards: 1,
   tls_insecure_skip_verify: false,
@@ -516,6 +515,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
 export function transformChannelToFormDefaults(
   channel: Channel
 ): ChannelFormValues {
+  let headerOverride = channel.header_override || ''
   // Parse channel extra settings from setting field
   let extraSettings = {
     task_plugin_key: '',
@@ -524,7 +524,6 @@ export function transformChannelToFormDefaults(
     force_format: false,
     thinking_to_content: false,
     proxy: '',
-    pass_through_header_enabled: false,
     http_protocol: HTTP_PROTOCOL_AUTO as 'auto' | 'http1',
     http2_connection_shards: 1,
     tls_insecure_skip_verify: false,
@@ -537,6 +536,10 @@ export function transformChannelToFormDefaults(
   if (channel.setting) {
     try {
       const parsed = JSON.parse(channel.setting)
+      // Saving adopts upstream override precedence and drops the legacy flag.
+      if (parsed.pass_through_header_enabled === true) {
+        headerOverride = setHeaderPassthrough(headerOverride, true)
+      }
       const protocol = normalizeHttpProtocol(parsed.http_protocol)
       const shards = normalizeHttp2ConnectionShards(
         parsed.http2_connection_shards
@@ -552,8 +555,6 @@ export function transformChannelToFormDefaults(
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
-        pass_through_header_enabled:
-          parsed.pass_through_header_enabled || false,
         http_protocol: protocol,
         http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
         tls_insecure_skip_verify: parsed.tls_insecure_skip_verify === true,
@@ -652,7 +653,7 @@ export function transformChannelToFormDefaults(
     remark: channel.remark || '',
     setting: channel.setting || '',
     param_override: channel.param_override || '',
-    header_override: channel.header_override || '',
+    header_override: headerOverride,
     settings: channel.settings || '{}',
     other: channel.other || '',
     multi_key_mode: 'single',
@@ -707,7 +708,6 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,
     proxy: formData.proxy?.trim() || '',
-    pass_through_header_enabled: formData.pass_through_header_enabled || false,
     pass_through_body_enabled: formData.pass_through_body_enabled === true,
     // A plugin channel shows the switch only when its plugin can serve it.
     responses_websocket_enabled:
