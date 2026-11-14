@@ -25,6 +25,9 @@ export const logSettingsSchema = z.object({
     user_export_enabled: z.boolean(),
     max_range_days: z.number().int().min(1),
   }),
+  system_task_setting: z.object({
+    retention_days: z.number().int().min(1),
+  }),
 })
 
 export type LogSettingsFormValues = z.infer<typeof logSettingsSchema>

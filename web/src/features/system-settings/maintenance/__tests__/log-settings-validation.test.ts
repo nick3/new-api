@@ -25,6 +25,7 @@ describe('detailed log retention validation', () => {
     const result = logSettingsSchema.safeParse({
       LogConsumeEnabled: true,
       log_setting: { user_export_enabled: true, max_range_days: 365 },
+      system_task_setting: { retention_days: 30 },
       DetailedLogRetentionDays: 0,
     })
 
@@ -35,6 +36,7 @@ describe('detailed log retention validation', () => {
     const result = logSettingsSchema.safeParse({
       LogConsumeEnabled: true,
       log_setting: { user_export_enabled: true, max_range_days: 365 },
+      system_task_setting: { retention_days: 30 },
       DetailedLogRetentionDays: -1,
     })
 
@@ -45,6 +47,7 @@ describe('detailed log retention validation', () => {
     const result = logSettingsSchema.safeParse({
       LogConsumeEnabled: true,
       log_setting: { user_export_enabled: true, max_range_days: 365 },
+      system_task_setting: { retention_days: 30 },
       DetailedLogRetentionDays: 1.5,
     })
 
